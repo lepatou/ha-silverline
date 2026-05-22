@@ -108,7 +108,8 @@
           "P7": "P7 — Coil sensor",
           "unknown": "Unknown fault"
         }
-      }
+      },
+      "runtime_today": { "name": "Runtime today" }
     },
     "binary_sensor": {
       "water_pump": { "name": "Water pump" },

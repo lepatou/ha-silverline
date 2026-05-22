@@ -22,7 +22,8 @@
       "actual_frequency": { "default": "mdi:sine-wave" },
       "eev_steps": { "default": "mdi:valve" },
       "fan_speed": { "default": "mdi:fan" },
-      "fault_code": { "default": "mdi:alert-circle-outline" }
+      "fault_code": { "default": "mdi:alert-circle-outline" },
+      "runtime_today": { "default": "mdi:timer-outline" }
     },
     "binary_sensor": {
       "water_pump": { "default": "mdi:water-pump" },

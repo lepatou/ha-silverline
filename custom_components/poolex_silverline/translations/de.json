@@ -108,7 +108,8 @@
           "P7": "P7 — Verdampfer-Sensor",
           "unknown": "Unbekannter Fehler"
         }
-      }
+      },
+      "runtime_today": { "name": "Laufzeit heute" }
     },
     "binary_sensor": {
       "water_pump": { "name": "Wasserpumpe" },
