@@ -1,0 +1,280 @@
+"""Climate platform for the Poolex Silverline."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Final
+
+from homeassistant.components.climate import (
+    ClimateEntity,
+    ClimateEntityFeature,
+    HVACMode,
+)
+from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
+from pysilverline import CannotConnect, InvalidAuth, const as tuya_const
+
+from .const import (
+    AUTO_TEMP_MAX,
+    AUTO_TEMP_MIN,
+    COOL_PREFIX_TO_PRESET,
+    COOL_TEMP_MAX,
+    COOL_TEMP_MIN,
+    DOMAIN,
+    HEAT_PREFIX_TO_PRESET,
+    HEAT_TEMP_MAX,
+    HEAT_TEMP_MIN,
+    PRESET_BOOST,
+    PRESET_ECO,
+    PRESET_TO_COOL_DP,
+    PRESET_TO_HEAT_DP,
+)
+from .coordinator import SilverlineConfigEntry, SilverlineCoordinator
+from .entity import SilverlineEntity
+
+_LOGGER = logging.getLogger(__name__)
+
+PARALLEL_UPDATES = 1
+
+PRESET_NONE = "none"
+PRESETS: list[str] = [PRESET_NONE, PRESET_BOOST, PRESET_ECO]
+
+HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL]
+
+_MODE_TRANSITION_SETTLE: Final = 0.7
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: SilverlineConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    async_add_entities([SilverlineClimate(entry.runtime_data)])
+
+
+class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
+    """Single climate entity that maps DP 1 (power) and DP 4 (mode) onto
+    HVAC mode + preset."""
+
+    _attr_translation_key = "heatpump"
+    _attr_name = None
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_target_temperature_step = 1
+    _attr_precision = PRECISION_WHOLE
+    _attr_hvac_modes = HVAC_MODES
+    _attr_preset_modes = PRESETS
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.PRESET_MODE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
+    )
+
+    def __init__(self, coordinator: SilverlineCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.device_info.device_id}_climate"
+        # When the device is off we can't read DP 4 to know the user's last
+        # intent. Persist it so HA-restart while-off still remembers heat-vs-cool.
+        self._last_direction: HVACMode = HVACMode.HEAT
+        self._last_preset: str = PRESET_NONE
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            attrs = last_state.attributes
+            stored_dir = attrs.get("last_direction")
+            if stored_dir in (HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL):
+                self._last_direction = HVACMode(stored_dir)
+            stored_preset = attrs.get("last_preset")
+            if stored_preset in PRESETS:
+                self._last_preset = stored_preset
+        self._sync_from_state()
+
+    def _handle_coordinator_update(self) -> None:
+        self._sync_from_state()
+        super()._handle_coordinator_update()
+
+    def _sync_from_state(self) -> None:
+        """Mirror the active hvac/preset into _last_* whenever the device
+        is not off, so an OFF→ON transition can later restore them."""
+        current_hvac = self.hvac_mode
+        if current_hvac in (HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL):
+            self._last_direction = current_hvac
+        # Only capture the preset while the unit is actively heating/cooling;
+        # in OFF the preset_mode property collapses to "none" and would
+        # otherwise clobber the user's last intent across an off→on cycle.
+        if current_hvac in (HVACMode.HEAT, HVACMode.COOL):
+            current_preset = self.preset_mode
+            if current_preset in PRESETS:
+                self._last_preset = current_preset
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "last_direction": self._last_direction.value,
+            "last_preset": self._last_preset,
+        }
+
+    @property
+    def hvac_mode(self) -> HVACMode | None:
+        state = self.coordinator.data
+        if state is None or state.power is None:
+            return None
+        if not state.power:
+            return HVACMode.OFF
+        mode = state.mode or ""
+        if mode == "Auto":
+            return HVACMode.HEAT_COOL
+        if mode in HEAT_PREFIX_TO_PRESET:
+            return HVACMode.HEAT
+        if mode in COOL_PREFIX_TO_PRESET:
+            return HVACMode.COOL
+        return None
+
+    @property
+    def preset_mode(self) -> str | None:
+        state = self.coordinator.data
+        if state is None or not state.power or not state.mode:
+            return PRESET_NONE
+        if state.mode in HEAT_PREFIX_TO_PRESET:
+            return HEAT_PREFIX_TO_PRESET[state.mode]
+        if state.mode in COOL_PREFIX_TO_PRESET:
+            return COOL_PREFIX_TO_PRESET[state.mode]
+        return PRESET_NONE
+
+    @property
+    def current_temperature(self) -> float | None:
+        state = self.coordinator.data
+        return None if state is None else state.temp_current
+
+    @property
+    def target_temperature(self) -> float | None:
+        state = self.coordinator.data
+        return None if state is None else state.temp_set
+
+    @property
+    def min_temp(self) -> float:
+        return self._mode_temp_range()[0]
+
+    @property
+    def max_temp(self) -> float:
+        return self._mode_temp_range()[1]
+
+    def _mode_temp_range(self) -> tuple[int, int]:
+        # Device clamps differently per mode (Heat 15-40, Cool 8-28, Auto 8-40).
+        # When OFF we use _last_direction so the slider still bounds sensibly.
+        mode = self.hvac_mode
+        if mode == HVACMode.OFF:
+            mode = self._last_direction
+        if mode == HVACMode.COOL:
+            return COOL_TEMP_MIN, COOL_TEMP_MAX
+        if mode == HVACMode.HEAT_COOL:
+            return AUTO_TEMP_MIN, AUTO_TEMP_MAX
+        return HEAT_TEMP_MIN, HEAT_TEMP_MAX
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        if hvac_mode == HVACMode.OFF:
+            await self._write({tuya_const.DP_POWER: False})
+            return
+
+        if hvac_mode in (HVACMode.HEAT, HVACMode.COOL):
+            mode_string = self._mode_string_for(hvac_mode, self._last_preset)
+            self._last_direction = hvac_mode
+        elif hvac_mode == HVACMode.HEAT_COOL:
+            mode_string = "Auto"
+            self._last_direction = HVACMode.HEAT_COOL
+            self._last_preset = PRESET_NONE
+        else:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unsupported_hvac_mode",
+                translation_placeholders={"mode": str(hvac_mode)},
+            )
+
+        await self._write(
+            {tuya_const.DP_POWER: True, tuya_const.DP_MODE: mode_string}
+        )
+        # Device has per-mode setpoint memory: entering a mode triggers a
+        # restore-push for that mode's last temp ~430-500 ms later, which
+        # would overwrite any setpoint a chained service call writes too soon.
+        await asyncio.sleep(_MODE_TRANSITION_SETTLE)
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        if preset_mode not in PRESETS:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unsupported_preset_mode",
+                translation_placeholders={"preset": preset_mode},
+            )
+        current = self.hvac_mode
+        if current == HVACMode.HEAT_COOL:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="preset_not_available_in_auto",
+            )
+        if current not in (HVACMode.HEAT, HVACMode.COOL):
+            self._last_preset = preset_mode
+            return
+
+        self._last_preset = preset_mode
+        mode_string = self._mode_string_for(current, preset_mode)
+        await self._write({tuya_const.DP_MODE: mode_string})
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        target = kwargs.get(ATTR_TEMPERATURE)
+        if target is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="missing_target_temperature",
+            )
+        value = int(round(float(target)))
+        lo, hi = self._mode_temp_range()
+        if value < lo or value > hi:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="temperature_out_of_range_for_mode",
+                translation_placeholders={
+                    "value": str(value),
+                    "min": str(lo),
+                    "max": str(hi),
+                    "mode": str(self.hvac_mode or HVACMode.OFF),
+                },
+            )
+        await self._write({tuya_const.DP_TEMP_SET: value})
+
+    async def async_turn_on(self) -> None:
+        await self.async_set_hvac_mode(self._last_direction)
+
+    async def async_turn_off(self) -> None:
+        await self.async_set_hvac_mode(HVACMode.OFF)
+
+    @staticmethod
+    def _mode_string_for(direction: HVACMode, preset: str) -> str:
+        table = PRESET_TO_HEAT_DP if direction == HVACMode.HEAT else PRESET_TO_COOL_DP
+        return table.get(preset, table[PRESET_NONE])
+
+    async def _write(self, dps: dict[int, bool | int | str]) -> None:
+        try:
+            await self.coordinator.client.set_multiple(dps)
+        except InvalidAuth as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="auth_failed",
+            ) from err
+        except CannotConnect as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="set_failed",
+                translation_placeholders={"reason": str(err)},
+            ) from err
+        # Push the optimistic merged state to the coordinator so the entity
+        # reflects the change immediately. The device will subsequently send
+        # its own STATUS push within ~200 ms which the coordinator will
+        # overlay on top.
+        if self.coordinator.data is not None:
+            merged = self.coordinator.data.merge({str(k): v for k, v in dps.items()})
+            self.coordinator.async_set_updated_data(merged)

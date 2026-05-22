@@ -1,0 +1,30 @@
+{
+  "entity": {
+    "climate": {
+      "heatpump": {
+        "default": "mdi:hot-tub"
+      }
+    },
+    "sensor": {
+      "exhaust_temperature": { "default": "mdi:thermometer-high" },
+      "return_temperature": { "default": "mdi:thermometer" },
+      "coil_temperature": { "default": "mdi:radiator" },
+      "ambient_temperature": { "default": "mdi:thermometer-lines" },
+      "inlet_temperature": { "default": "mdi:thermometer-water" },
+      "outlet_temperature": { "default": "mdi:thermometer-water" },
+      "target_frequency": { "default": "mdi:sine-wave" },
+      "actual_frequency": { "default": "mdi:sine-wave" },
+      "eev_steps": { "default": "mdi:valve" },
+      "fan_speed": { "default": "mdi:fan" },
+      "fault_code": { "default": "mdi:alert-circle-outline" }
+    },
+    "binary_sensor": {
+      "water_pump": { "default": "mdi:water-pump" },
+      "fault_water_flow": { "default": "mdi:water-alert" },
+      "fault_antifreeze": { "default": "mdi:snowflake-alert" },
+      "fault_high_pressure": { "default": "mdi:gauge-full" },
+      "fault_low_pressure": { "default": "mdi:gauge-low" },
+      "fault_communication": { "default": "mdi:lan-disconnect" }
+    }
+  }
+}

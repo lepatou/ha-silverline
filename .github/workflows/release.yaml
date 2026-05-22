@@ -1,0 +1,38 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Sync manifest version with tag
+        run: |
+          python -c "
+          import json, pathlib
+          path = pathlib.Path('custom_components/poolex_silverline/manifest.json')
+          data = json.loads(path.read_text())
+          data['version'] = '${{ steps.version.outputs.version }}'
+          path.write_text(json.dumps(data, indent=2) + '\n')
+          "
+
+      - name: Build release zip
+        run: |
+          cd custom_components/poolex_silverline
+          zip -r "$GITHUB_WORKSPACE/poolex_silverline.zip" .
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: poolex_silverline.zip
+          generate_release_notes: true

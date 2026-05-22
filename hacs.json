@@ -1,0 +1,8 @@
+{
+  "name": "Poolex Silverline",
+  "homeassistant": "2025.1.0",
+  "hacs": "2.0.0",
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "poolex_silverline.zip"
+}

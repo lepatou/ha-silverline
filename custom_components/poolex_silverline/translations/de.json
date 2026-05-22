@@ -1,0 +1,135 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit Poolex Silverline verbinden",
+        "description": "Gib die Netzwerk- und Tuya-Zugangsdaten der Wärmepumpe ein. Das Gerät muss im selben Netzwerk wie Home Assistant erreichbar sein; die Smart-Life-App darf nicht parallel verbunden sein.",
+        "data": {
+          "host": "Host oder IP",
+          "port": "Port",
+          "device_id": "Geräte-ID",
+          "local_key": "Local Key"
+        },
+        "data_description": {
+          "host": "Hostname oder IP-Adresse der Wärmepumpe im LAN.",
+          "port": "Tuya-Lokal-Port (Standard 6668).",
+          "device_id": "Tuya-Geräte-ID (22 Hex-Zeichen), zu finden in der Smart-Life-Entwicklerkonsole oder via tinytuya scan.",
+          "local_key": "16 Zeichen langer gerätespezifischer Schlüssel aus der Tuya-Cloud."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Poolex Silverline neu authentifizieren",
+        "description": "Das Gerät hat den gespeicherten Local Key abgelehnt. Bitte den aktuellen Schlüssel eingeben.",
+        "data": {
+          "local_key": "Local Key"
+        },
+        "data_description": {
+          "local_key": "16-stelliger gerätespezifischer Schlüssel. Wird neu erzeugt, sobald das Gerät in Smart Life neu gekoppelt wird."
+        }
+      },
+      "reconfigure": {
+        "title": "Poolex Silverline neu konfigurieren",
+        "description": "Verbindungsdaten der Wärmepumpe aktualisieren.",
+        "data": {
+          "host": "Host oder IP",
+          "port": "Port",
+          "device_id": "Geräte-ID",
+          "local_key": "Local Key"
+        },
+        "data_description": {
+          "host": "Hostname oder IP-Adresse der Wärmepumpe im LAN.",
+          "port": "Tuya-Lokal-Port (Standard 6668).",
+          "device_id": "Muss mit der ursprünglich hinzugefügten Geräte-ID übereinstimmen.",
+          "local_key": "16 Zeichen langer gerätespezifischer Schlüssel."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur Wärmepumpe fehlgeschlagen.",
+      "invalid_auth": "Der Local Key wurde vom Gerät abgelehnt.",
+      "unknown": "Unerwarteter Fehler."
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits konfiguriert.",
+      "reauth_successful": "Neuauthentifizierung war erfolgreich.",
+      "reconfigure_successful": "Neukonfiguration war erfolgreich.",
+      "device_id_mismatch": "Die eingegebene Geräte-ID stimmt nicht mit dem ursprünglichen Gerät überein."
+    }
+  },
+  "entity": {
+    "climate": {
+      "heatpump": {
+        "name": "Wärmepumpe",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "none": "Inverter",
+              "boost": "Boost",
+              "eco": "Silent"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "exhaust_temperature": { "name": "Verdichter-Heißgastemperatur" },
+      "return_temperature": { "name": "Verdichter-Sauggastemperatur" },
+      "coil_temperature": { "name": "Verdampfertemperatur" },
+      "ambient_temperature": { "name": "Außentemperatur" },
+      "inlet_temperature": { "name": "Wassereintrittstemperatur" },
+      "outlet_temperature": { "name": "Wasseraustrittstemperatur" },
+      "target_frequency": { "name": "Verdichter-Sollfrequenz" },
+      "actual_frequency": { "name": "Verdichter-Istfrequenz" },
+      "eev_steps": { "name": "Expansionsventil-Schritte" },
+      "fan_speed": { "name": "Lüfterdrehzahl" },
+      "fault_code": {
+        "name": "Fehlercode",
+        "state": {
+          "none": "OK",
+          "E03": "E03 — Wasserdurchfluss-Schutz",
+          "E04": "E04 — Frostschutz aktiv",
+          "E05": "E05 — Hochdruckschutz",
+          "E06": "E06 — Niederdruckschutz",
+          "E09": "E09 — Kommunikationsfehler",
+          "E10": "E10 — Inverter-Kommunikationsfehler",
+          "P3": "P3 — Wassereintritts-Sensor",
+          "P4": "P4 — Wasseraustritts-Sensor",
+          "P1": "P1 — Abtau-Sensor",
+          "P7": "P7 — Verdampfer-Sensor",
+          "unknown": "Unbekannter Fehler"
+        }
+      }
+    },
+    "binary_sensor": {
+      "water_pump": { "name": "Wasserpumpe" },
+      "fault_water_flow": { "name": "Wasserdurchfluss-Fehler" },
+      "fault_antifreeze": { "name": "Frostschutz-Fehler" },
+      "fault_high_pressure": { "name": "Hochdruck-Fehler" },
+      "fault_low_pressure": { "name": "Niederdruck-Fehler" },
+      "fault_communication": { "name": "Kommunikations-Fehler" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Die Wärmepumpe hat die Zugangsdaten abgelehnt. Eine Neuauthentifizierung ist erforderlich."
+    },
+    "set_failed": {
+      "message": "Aktualisierung der Wärmepumpe fehlgeschlagen: {reason}"
+    },
+    "preset_not_available_in_auto": {
+      "message": "Boost und Silent stehen im Auto-Modus nicht zur Verfügung."
+    },
+    "unsupported_hvac_mode": {
+      "message": "HVAC-Modus {mode} wird nicht unterstützt."
+    },
+    "unsupported_preset_mode": {
+      "message": "Preset {preset} wird nicht unterstützt."
+    },
+    "missing_target_temperature": {
+      "message": "set_temperature benötigt eine Zieltemperatur."
+    },
+    "temperature_out_of_range_for_mode": {
+      "message": "Zieltemperatur {value} °C liegt außerhalb des Bereichs für Modus {mode}. Erlaubt: {min}–{max} °C."
+    }
+  }
+}

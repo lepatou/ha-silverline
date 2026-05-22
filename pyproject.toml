@@ -1,0 +1,31 @@
+[project]
+name = "ha-silverline"
+version = "0.1.0"
+description = "Home Assistant custom component for Poolex Silverline pool heat pumps."
+requires-python = ">=3.13"
+
+[project.optional-dependencies]
+test = [
+  "pysilverline @ file://./pysilverline",
+  "pytest>=8",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-homeassistant-custom-component",
+  "syrupy",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["custom_components.poolex_silverline"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+]

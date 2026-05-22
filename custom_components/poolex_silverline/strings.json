@@ -1,0 +1,135 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Poolex Silverline",
+        "description": "Enter the heat pump's local network details and Tuya credentials. The device must be on the same network as Home Assistant; the Smart Life app should not be connected at the same time.",
+        "data": {
+          "host": "Host or IP",
+          "port": "Port",
+          "device_id": "Device ID",
+          "local_key": "Local key"
+        },
+        "data_description": {
+          "host": "Hostname or IP address of the heat pump on the LAN.",
+          "port": "Tuya local port (default 6668).",
+          "device_id": "Tuya device ID (22 hex characters), found in the Smart Life developer console or via tinytuya scan.",
+          "local_key": "16-character device-specific encryption key from the Tuya cloud."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Poolex Silverline",
+        "description": "The device rejected the stored local key. Enter the current key.",
+        "data": {
+          "local_key": "Local key"
+        },
+        "data_description": {
+          "local_key": "16-character device-specific key. Reissued whenever the device is re-paired in Smart Life."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Poolex Silverline",
+        "description": "Update the connection details for this heat pump.",
+        "data": {
+          "host": "Host or IP",
+          "port": "Port",
+          "device_id": "Device ID",
+          "local_key": "Local key"
+        },
+        "data_description": {
+          "host": "Hostname or IP address of the heat pump on the LAN.",
+          "port": "Tuya local port (default 6668).",
+          "device_id": "Must match the device that was originally added.",
+          "local_key": "16-character device-specific encryption key."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the heat pump.",
+      "invalid_auth": "The local key was rejected by the device.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "Re-configuration was successful.",
+      "device_id_mismatch": "The supplied device ID does not match the original device."
+    }
+  },
+  "entity": {
+    "climate": {
+      "heatpump": {
+        "name": "Heatpump",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "none": "Inverter",
+              "boost": "Boost",
+              "eco": "Silent"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "exhaust_temperature": { "name": "Compressor exhaust temperature" },
+      "return_temperature": { "name": "Compressor return temperature" },
+      "coil_temperature": { "name": "Evaporator coil temperature" },
+      "ambient_temperature": { "name": "Outdoor ambient temperature" },
+      "inlet_temperature": { "name": "Water inlet temperature" },
+      "outlet_temperature": { "name": "Water outlet temperature" },
+      "target_frequency": { "name": "Compressor target frequency" },
+      "actual_frequency": { "name": "Compressor actual frequency" },
+      "eev_steps": { "name": "EEV steps" },
+      "fan_speed": { "name": "Fan speed" },
+      "fault_code": {
+        "name": "Fault code",
+        "state": {
+          "none": "OK",
+          "E03": "E03 — Water flow protection",
+          "E04": "E04 — Antifreeze protection",
+          "E05": "E05 — High pressure protection",
+          "E06": "E06 — Low pressure protection",
+          "E09": "E09 — Communication failure",
+          "E10": "E10 — Inverter communication failure",
+          "P3": "P3 — Inlet temperature sensor",
+          "P4": "P4 — Outlet temperature sensor",
+          "P1": "P1 — Defrost sensor",
+          "P7": "P7 — Coil sensor",
+          "unknown": "Unknown fault"
+        }
+      }
+    },
+    "binary_sensor": {
+      "water_pump": { "name": "Water pump" },
+      "fault_water_flow": { "name": "Water flow fault" },
+      "fault_antifreeze": { "name": "Antifreeze fault" },
+      "fault_high_pressure": { "name": "High pressure fault" },
+      "fault_low_pressure": { "name": "Low pressure fault" },
+      "fault_communication": { "name": "Communication fault" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "The heat pump rejected the credentials. Re-authentication is required."
+    },
+    "set_failed": {
+      "message": "Failed to update the heat pump: {reason}"
+    },
+    "preset_not_available_in_auto": {
+      "message": "Boost and silent presets are not available while the heat pump is in auto mode."
+    },
+    "unsupported_hvac_mode": {
+      "message": "HVAC mode {mode} is not supported."
+    },
+    "unsupported_preset_mode": {
+      "message": "Preset {preset} is not supported."
+    },
+    "missing_target_temperature": {
+      "message": "set_temperature requires a target temperature."
+    },
+    "temperature_out_of_range_for_mode": {
+      "message": "Target temperature {value} °C is out of range for mode {mode}. Allowed: {min}–{max} °C."
+    }
+  }
+}
