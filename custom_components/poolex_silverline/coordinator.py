@@ -41,7 +41,7 @@ _FAULT_SEVERITY: Final[dict[str, ir.IssueSeverity]] = {
     "P7": ir.IssueSeverity.WARNING,
 }
 _LEARN_MORE_URL: Final = (
-    "https://github.com/christian-reiss/ha-silverline#troubleshooting"
+    "https://github.com/christianreiss/ha-silverline#troubleshooting"
 )
 
 _LOGGER = logging.getLogger(__name__)

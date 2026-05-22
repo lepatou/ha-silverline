@@ -44,7 +44,7 @@ only the PC-SLP090N has been verified directly:
 ### Via HACS (recommended)
 
 1. In HACS, open the integrations tab → "⋮" menu → "Custom repositories".
-2. Add `https://github.com/christian-reiss/ha-silverline` as type
+2. Add `https://github.com/christianreiss/ha-silverline` as type
    "Integration".
 3. Install **Poolex Silverline** from the new entry, restart Home Assistant.
 

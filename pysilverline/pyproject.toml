@@ -25,8 +25,8 @@ dependencies = ["cryptography>=41.0"]
 test = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.urls]
-Homepage = "https://github.com/christian-reiss/ha-silverline"
-Issues = "https://github.com/christian-reiss/ha-silverline/issues"
+Homepage = "https://github.com/christianreiss/ha-silverline"
+Issues = "https://github.com/christianreiss/ha-silverline/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pysilverline"]

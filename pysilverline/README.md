@@ -5,7 +5,7 @@ local Tuya protocol (TCP/6668, AES-128-ECB) directly — no cloud, no Smart Life
 account at runtime.
 
 This package is the I/O layer underneath the
-[`poolex_silverline`](https://github.com/christian-reiss/ha-silverline) Home
+[`poolex_silverline`](https://github.com/christianreiss/ha-silverline) Home
 Assistant integration but works standalone too.
 
 ## Install
