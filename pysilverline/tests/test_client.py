@@ -108,6 +108,102 @@ async def test_get_status_round_trip() -> None:
             await client.disconnect()
 
 
+async def test_poll_merges_with_prior_push_state() -> None:
+    """Tuya firmware variants exist where certain DPs only ride along
+    in spontaneous STATUS pushes and never in DP_QUERY responses. The
+    poll path must merge (overlay) the response onto the prior state
+    rather than replacing, otherwise those push-only DPs would flicker
+    to None on every 30s poll.
+    """
+    pushed_to: list[Any] = []
+
+    async def handler(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        from pysilverline.protocol import FrameCodec
+
+        # 1) Send a STATUS push the moment the client connects, carrying
+        #    a DP the eventual DP_QUERY response will deliberately omit.
+        push = _build_frame(
+            seq=999,
+            cmd=const.CMD_STATUS,
+            body={"dps": {"110": 850, "1": True}},
+            retcode=None,
+        )
+        writer.write(push)
+        await writer.drain()
+        pushed_to.append(True)
+
+        # 2) Then handle the DP_QUERY normally — but the response only
+        #    carries DPs 1 + 4 + 3, omitting the fan_speed (DP 110)
+        #    that the device announced via push.
+        codec = FrameCodec(KEY)
+        buf = bytearray()
+        try:
+            while True:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    return
+                buf.extend(chunk)
+                while len(buf) >= 24:
+                    try:
+                        frame, remainder = codec.decode(bytes(buf))
+                    except Exception:
+                        return
+                    buf = bytearray(remainder)
+                    if frame.cmd == const.CMD_DP_QUERY:
+                        writer.write(
+                            _build_frame(
+                                frame.seq,
+                                const.CMD_DP_QUERY,
+                                {"dps": {"1": True, "4": "Heat", "3": 26}},
+                            )
+                        )
+                        await writer.drain()
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except OSError:
+                pass
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        client = SilverlineClient(
+            host="127.0.0.1",
+            port=port,
+            device_id=DEVICE_ID,
+            local_key=KEY,
+            request_timeout=1.0,
+        )
+        await client.connect()
+        try:
+            # Let the push frame land in the client state first.
+            for _ in range(40):
+                if client.state.fan_speed == 850:
+                    break
+                await asyncio.sleep(0.025)
+            assert (
+                client.state.fan_speed == 850
+            ), "push frame did not populate state.fan_speed"
+
+            # Now poll. The DP_QUERY response omits DP 110; with merge,
+            # the previously pushed fan_speed must survive. Before the
+            # merge fix, get_status replaced the whole state and fan_speed
+            # would have flipped to None.
+            state = await client.get_status()
+            assert state.mode == "Heat"
+            assert state.fan_speed == 850, (
+                "poll wiped push-only DP from state — merge regression"
+            )
+        finally:
+            await client.disconnect()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 async def test_set_dp_sends_control_and_merges_state() -> None:
     async with FakeTuyaServer() as server:
         server.handlers[const.CMD_DP_QUERY] = lambda seq, body: _build_frame(

@@ -192,7 +192,13 @@ class SilverlineClient:
         dps = decoded.get("dps", {}) if isinstance(decoded, dict) else {}
         if not isinstance(dps, dict):
             raise ProtocolError(f"unexpected dps payload: {decoded!r}")
-        self._state = DeviceState.from_dps(dps)
+        # Merge rather than replace: some Tuya firmware variants only
+        # ship certain DPs in spontaneous STATUS pushes, not in
+        # DP_QUERY responses. If we replaced wholesale, those push-only
+        # DPs would flicker to None on every 30s poll. The push path
+        # already merges (_dispatch in this module); the poll path
+        # has to behave symmetrically.
+        self._state = self._state.merge(dps)
         return self._state
 
     async def set_dp(self, dp_id: int, value: bool | int | str) -> None:
