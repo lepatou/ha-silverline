@@ -231,19 +231,10 @@ class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
                 translation_domain=DOMAIN,
                 translation_key="missing_target_temperature",
             )
+        # HA's climate service guards min_temp/max_temp before we get here,
+        # and our properties are mode-aware, so the value is in range. We
+        # just round to int (DP 2 is integer °C) and write.
         value = int(round(float(target)))
-        lo, hi = self._mode_temp_range()
-        if value < lo or value > hi:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="temperature_out_of_range_for_mode",
-                translation_placeholders={
-                    "value": str(value),
-                    "min": str(lo),
-                    "max": str(hi),
-                    "mode": str(self.hvac_mode or HVACMode.OFF),
-                },
-            )
         await self._write({tuya_const.DP_TEMP_SET: value})
 
     async def async_turn_on(self) -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
@@ -193,3 +195,171 @@ async def test_off_to_heat_preserves_last_preset(
         blocking=True,
     )
     mock_client_factory.set_multiple.assert_awaited_with({1: True, 4: "BoostHeat"})
+
+
+# ---------------------------------------------------------------------------
+# Mode-aware setpoint range (Heat 15-40, Cool 8-28, Auto 8-40)
+# ---------------------------------------------------------------------------
+
+
+async def test_min_max_temp_for_heat_mode(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Heat", "2": 27, "3": 28})
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY_ID)
+    assert state is not None
+    assert state.attributes["min_temp"] == 15
+    assert state.attributes["max_temp"] == 40
+
+
+async def test_min_max_temp_for_cool_mode(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Cool", "2": 18, "3": 22})
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY_ID)
+    assert state is not None
+    assert state.attributes["min_temp"] == 8
+    assert state.attributes["max_temp"] == 28
+
+
+async def test_min_max_temp_for_auto_mode(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Auto", "2": 26, "3": 27})
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY_ID)
+    assert state is not None
+    assert state.attributes["min_temp"] == 8
+    assert state.attributes["max_temp"] == 40
+
+
+async def test_min_max_temp_when_off_uses_last_direction(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    """When OFF, the slider bounds come from _last_direction so the UI
+    still shows a sensible range matching the user's last active mode."""
+    coordinator = init_integration.runtime_data
+    # Start in Cool, then power off — _last_direction should be Cool.
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Cool", "2": 20, "3": 22})
+    )
+    await hass.async_block_till_done()
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": False, "4": "Cool", "3": 22})
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY_ID)
+    assert state is not None
+    assert state.state == HVACMode.OFF
+    assert state.attributes["min_temp"] == 8
+    assert state.attributes["max_temp"] == 28
+
+
+async def test_set_temperature_out_of_range_in_cool_blocked_by_ha(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    """HA's climate service validates target against our mode-aware
+    min_temp/max_temp BEFORE we run, so a 35°C write while in Cool
+    (max 28) is rejected at the service layer — DP 2 stays untouched."""
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Cool", "2": 25, "3": 26})
+    )
+    await hass.async_block_till_done()
+    mock_client_factory.set_multiple.reset_mock()
+
+    with pytest.raises(ServiceValidationError) as exc:
+        await hass.services.async_call(
+            CLIMATE_DOMAIN,
+            SERVICE_SET_TEMPERATURE,
+            {ATTR_ENTITY_ID: ENTITY_ID, ATTR_TEMPERATURE: 35},
+            blocking=True,
+        )
+    # HA uses its own translation key for the standard temp range check.
+    assert exc.value.translation_key == "temp_out_of_range"
+    mock_client_factory.set_multiple.assert_not_called()
+
+
+async def test_set_temperature_below_heat_min_blocked_by_ha(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    """Writing 10°C while in Heat (min 15) is blocked at HA's service
+    validator, again driven by our mode-aware min_temp."""
+    # init_integration starts in Heat mode
+    mock_client_factory.set_multiple.reset_mock()
+    with pytest.raises(ServiceValidationError) as exc:
+        await hass.services.async_call(
+            CLIMATE_DOMAIN,
+            SERVICE_SET_TEMPERATURE,
+            {ATTR_ENTITY_ID: ENTITY_ID, ATTR_TEMPERATURE: 10},
+            blocking=True,
+        )
+    assert exc.value.translation_key == "temp_out_of_range"
+    mock_client_factory.set_multiple.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Mode-transition settle: the 0.7s sleep after non-OFF set_hvac_mode
+# ---------------------------------------------------------------------------
+
+
+async def test_set_hvac_mode_sleeps_after_non_off_write(
+    hass: HomeAssistant, mock_client_factory, init_integration, monkeypatch
+) -> None:
+    """async_set_hvac_mode should sleep _MODE_TRANSITION_SETTLE after
+    a non-OFF write so the device's per-mode-memory restore push
+    lands before any chained set_temperature races with it."""
+    import custom_components.poolex_silverline.climate as climate_mod
+
+    recorded: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        recorded.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(climate_mod.asyncio, "sleep", fake_sleep)
+
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.COOL},
+        blocking=True,
+    )
+    assert climate_mod._MODE_TRANSITION_SETTLE in recorded
+
+
+async def test_set_hvac_off_does_not_sleep(
+    hass: HomeAssistant, mock_client_factory, init_integration, monkeypatch
+) -> None:
+    """async_set_hvac_mode(OFF) doesn't trigger the per-mode-memory restore
+    so no settle wait is needed — keep the call snappy."""
+    import custom_components.poolex_silverline.climate as climate_mod
+
+    recorded: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        recorded.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(climate_mod.asyncio, "sleep", fake_sleep)
+
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.OFF},
+        blocking=True,
+    )
+    assert climate_mod._MODE_TRANSITION_SETTLE not in recorded

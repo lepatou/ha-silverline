@@ -127,9 +127,6 @@
     },
     "missing_target_temperature": {
       "message": "set_temperature benötigt eine Zieltemperatur."
-    },
-    "temperature_out_of_range_for_mode": {
-      "message": "Zieltemperatur {value} °C liegt außerhalb des Bereichs für Modus {mode}. Erlaubt: {min}–{max} °C."
     }
   }
 }
