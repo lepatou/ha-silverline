@@ -7,7 +7,6 @@ from .client import SilverlineClient
 from .discovery import DiscoveryInfo, discover, discover_once
 from .exceptions import (
     CannotConnect,
-    DeviceLocked,
     InvalidAuth,
     ProtocolError,
     SilverlineError,
@@ -17,7 +16,6 @@ from .models import DeviceInfo, DeviceState
 __all__ = [
     "CannotConnect",
     "DeviceInfo",
-    "DeviceLocked",
     "DeviceState",
     "DiscoveryInfo",
     "InvalidAuth",

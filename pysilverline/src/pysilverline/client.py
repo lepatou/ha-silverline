@@ -179,8 +179,8 @@ class SilverlineClient:
         body = {
             "gwId": self.device_id,
             "devId": self.device_id,
-            "uid": self.device_id,
-            "t": str(int(time.time())),
+            "uid": "",
+            "t": int(time.time()),
         }
         frame = await self._request(const.CMD_DP_QUERY, body)
         retcode, ciphertext = self._codec.split_response_payload(

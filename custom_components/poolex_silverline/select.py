@@ -23,6 +23,7 @@ from .const import (
     COOL_PREFIX_TO_PRESET,
     DOMAIN,
     HEAT_PREFIX_TO_PRESET,
+    MODE_TRANSITION_SETTLE,
     PRESET_BOOST,
     PRESET_ECO,
     PRESET_TO_COOL_DP,
@@ -46,11 +47,6 @@ OPMODE_OPTIONS: Final[list[str]] = [
     OPMODE_COOL,
     OPMODE_HEAT_COOL,
 ]
-
-# Keep in sync with climate.py — entering a non-OFF mode triggers a
-# device-side per-mode setpoint restore push ~430-500 ms later, so we
-# block briefly to avoid racing a chained set_temperature against it.
-_MODE_TRANSITION_SETTLE: Final = 0.7
 
 
 async def async_setup_entry(
@@ -210,4 +206,4 @@ class SilverlineOperatingModeSelect(_SilverlineSelectBase):
         # See climate.py: the device pushes its per-mode-memory setpoint
         # ~430-500 ms after a mode change. Without this sleep, a chained
         # service call's set_temperature can be clobbered by that push.
-        await asyncio.sleep(_MODE_TRANSITION_SETTLE)
+        await asyncio.sleep(MODE_TRANSITION_SETTLE)

@@ -50,3 +50,8 @@ COOL_TEMP_MIN: Final = 8
 COOL_TEMP_MAX: Final = 28
 AUTO_TEMP_MIN: Final = 8
 AUTO_TEMP_MAX: Final = 40
+
+# Entering a non-OFF mode triggers a device-side per-mode setpoint
+# restore push ~430-500 ms later, so callers that chain set_temperature
+# after a mode change block briefly to avoid racing the restore.
+MODE_TRANSITION_SETTLE: Final = 0.7

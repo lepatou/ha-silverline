@@ -141,7 +141,7 @@ async def test_operating_mode_select_heat_writes_dp1_true_and_mode_and_sleeps(
         blocking=True,
     )
     mock_client_factory.set_multiple.assert_awaited_with({1: True, 4: "Heat"})
-    assert select_mod._MODE_TRANSITION_SETTLE in recorded
+    assert select_mod.MODE_TRANSITION_SETTLE in recorded
 
 
 async def test_operating_mode_select_cool_writes_dp1_true_and_cool(
@@ -190,7 +190,7 @@ async def test_operating_mode_select_off_does_not_sleep(
         {ATTR_ENTITY_ID: OPMODE_ENTITY, ATTR_OPTION: "off"},
         blocking=True,
     )
-    assert select_mod._MODE_TRANSITION_SETTLE not in recorded
+    assert select_mod.MODE_TRANSITION_SETTLE not in recorded
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Final
+from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
@@ -29,6 +29,7 @@ from .const import (
     HEAT_PREFIX_TO_PRESET,
     HEAT_TEMP_MAX,
     HEAT_TEMP_MIN,
+    MODE_TRANSITION_SETTLE,
     PRESET_BOOST,
     PRESET_ECO,
     PRESET_TO_COOL_DP,
@@ -46,8 +47,6 @@ PRESET_NONE = "none"
 PRESETS: list[str] = [PRESET_NONE, PRESET_BOOST, PRESET_ECO]
 
 HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL]
-
-_MODE_TRANSITION_SETTLE: Final = 0.7
 
 
 async def async_setup_entry(
@@ -223,7 +222,7 @@ class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
         # Device has per-mode setpoint memory: entering a mode triggers a
         # restore-push for that mode's last temp ~430-500 ms later, which
         # would overwrite any setpoint a chained service call writes too soon.
-        await asyncio.sleep(_MODE_TRANSITION_SETTLE)
+        await asyncio.sleep(MODE_TRANSITION_SETTLE)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         if preset_mode not in PRESETS:

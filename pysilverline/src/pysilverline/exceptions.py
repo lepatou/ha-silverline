@@ -17,7 +17,3 @@ class InvalidAuth(SilverlineError):
 
 class ProtocolError(SilverlineError):
     """The frame was malformed or out of spec."""
-
-
-class DeviceLocked(SilverlineError):
-    """The device refused the command (Tuya error code 0xFF)."""

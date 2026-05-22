@@ -337,7 +337,7 @@ async def test_set_hvac_mode_sleeps_after_non_off_write(
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.COOL},
         blocking=True,
     )
-    assert climate_mod._MODE_TRANSITION_SETTLE in recorded
+    assert climate_mod.MODE_TRANSITION_SETTLE in recorded
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ async def test_set_hvac_off_does_not_sleep(
         {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.OFF},
         blocking=True,
     )
-    assert climate_mod._MODE_TRANSITION_SETTLE not in recorded
+    assert climate_mod.MODE_TRANSITION_SETTLE not in recorded
 
 
 # ---------------------------------------------------------------------------
