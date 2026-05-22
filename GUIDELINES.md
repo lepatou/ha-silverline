@@ -1,70 +1,70 @@
-# Home Assistant Integration – Best Practices & Framework Guidelines für Claude Code
+# Home Assistant Integration – Best Practices & Framework Guidelines for Claude Code
 
-> **Zweck dieses Dokuments:** Du (Claude Code) entwickelst eine HACS Custom Component für eine Wärmepumpe, die über lokale REST/HTTP‑Calls im LAN kommuniziert (`iot_class: local_polling`, optional `local_push`). Dieses Dokument ist deine verbindliche Referenz für **wie** integriert wird – nicht **was** an Wärmepumpen‑Domänenlogik gemacht wird. Ziel ist eine Integration, die zugleich **HACS‑konform** ist und **Core‑mergeable** bleibt (Quality Scale Bronze → idealerweise Silver/Gold). Stand: HA Core 2026.x, Python 3.13+.
+> **Purpose of this document:** You (Claude Code) are developing a HACS custom component for a heat pump that communicates over local REST/HTTP calls on the LAN (`iot_class: local_polling`, optionally `local_push`). This document is your binding reference for **how** to integrate — not **what** heat-pump domain logic to implement. The goal is an integration that is both **HACS-compliant** and remains **Core-mergeable** (Quality Scale Bronze → ideally Silver/Gold). Status: HA Core 2026.x, Python 3.13+.
 >
-> Wenn Unsicherheit besteht: **NICHT raten** – im Zweifel das jeweils verlinkte Dokument unter `developers.home-assistant.io` per Fetch konsultieren. Das ist die kanonische Quelle. Sekundärquellen (Blogs, Community‑Posts) sind bestenfalls Hinweise.
+> When in doubt: **do NOT guess** — when uncertain, consult the corresponding document under `developers.home-assistant.io` via fetch. That is the canonical source. Secondary sources (blogs, community posts) are at best hints.
 
 ---
 
-## 0. Leitprinzipien (TL;DR der Regeln)
+## 0. Guiding principles (TL;DR of the rules)
 
-1. **Async‑first, immer.** Kein blockierendes I/O im Event‑Loop. Wenn eine Bibliothek synchron ist → `hass.async_add_executor_job(...)`. Besser: eine vollständig async‑Bibliothek schreiben (Platinum‑Voraussetzung).
-2. **Keine eigene `aiohttp.ClientSession`.** Immer `async_get_clientsession(hass)` aus `homeassistant.helpers.aiohttp_client` benutzen, wenn keine Cookies oder Sondereinstellungen nötig sind. Sonst `async_create_clientsession(hass, ...)`. Quelle: `homeassistant/helpers/aiohttp_client.py`.
-3. **Eine API‑Client‑Klasse, sauber von HA entkoppelt.** Idealerweise als eigenes PyPI‑Package (z. B. `pyheatpumpxy`), sodass die Integration nur dünner Wrapper ist (HA‑Idiom „Integration ist Glue Code"). Quality‑Scale‑Regel `dependency-transparency`.
-4. **`DataUpdateCoordinator` ist Pflicht** für jedes Polling. Eigene Polling‑Schleifen oder `async_track_time_interval` zum Daten‑Holen sind Anti‑Pattern.
-5. **Config Flow only.** Kein YAML‑Setup. ADR‑0010 sagt klar: für Geräte/Services ist UI‑Setup verbindlich. Quality‑Scale‑Regel `config-flow`.
-6. **`ConfigEntry.runtime_data`** statt `hass.data[DOMAIN][entry.entry_id]`. Seit 2024.5 idiomatisch, ab 2024.11 für Bronze verpflichtend.
-7. **`EntityDescription`‑Pattern** für alle Entities, **nicht** Property‑Salat.
-8. **Strict typing**, `from __future__ import annotations`, kein `Any` ohne Begründung. Platinum‑Regel `strict-typing`.
-9. **Keine Klartext‑Strings im UI.** Alles über `strings.json` + `translations/<lang>.json` und `translation_key`.
-10. **Tests sind keine Optionen.** Bronze fordert `config-flow-test-coverage` (100 % im Config Flow), Silver fordert `> 95 %` Gesamt‑Coverage.
+1. **Async-first, always.** No blocking I/O in the event loop. If a library is synchronous → `hass.async_add_executor_job(...)`. Better: write a fully async library (Platinum prerequisite).
+2. **No custom `aiohttp.ClientSession`.** Always use `async_get_clientsession(hass)` from `homeassistant.helpers.aiohttp_client` when no cookies or special settings are needed. Otherwise `async_create_clientsession(hass, ...)`. Source: `homeassistant/helpers/aiohttp_client.py`.
+3. **One API client class, cleanly decoupled from HA.** Ideally as a separate PyPI package (e.g. `pyheatpumpxy`) so the integration is just a thin wrapper (HA idiom: "integration is glue code"). Quality scale rule `dependency-transparency`.
+4. **`DataUpdateCoordinator` is mandatory** for any polling. Custom polling loops or `async_track_time_interval` for fetching data are anti-patterns.
+5. **Config Flow only.** No YAML setup. ADR-0010 states clearly: for devices/services, UI setup is mandatory. Quality scale rule `config-flow`.
+6. **`ConfigEntry.runtime_data`** instead of `hass.data[DOMAIN][entry.entry_id]`. Idiomatic since 2024.5, required for Bronze from 2024.11 on.
+7. **`EntityDescription` pattern** for all entities, **not** a property salad.
+8. **Strict typing**, `from __future__ import annotations`, no `Any` without justification. Platinum rule `strict-typing`.
+9. **No plain-text strings in the UI.** Everything via `strings.json` + `translations/<lang>.json` and `translation_key`.
+10. **Tests are not optional.** Bronze requires `config-flow-test-coverage` (100% in the config flow), Silver requires `> 95%` overall coverage.
 
-Direkter Einstieg: <https://developers.home-assistant.io/docs/creating_integration_file_structure/>
+Quick entry point: <https://developers.home-assistant.io/docs/creating_integration_file_structure/>
 
 ---
 
-## 1. Projektstruktur
+## 1. Project structure
 
-### 1.1 Verzeichnisbaum (HACS‑konform und Core‑konform)
+### 1.1 Directory tree (HACS-compliant and Core-compliant)
 
 ```
-heatpump_xy/                              # GitHub‑Repo‑Root
-├── README.md                             # Pflicht für HACS
-├── hacs.json                             # Pflicht im Repo‑Root für HACS
+heatpump_xy/                              # GitHub repo root
+├── README.md                             # Required for HACS
+├── hacs.json                             # Required at the repo root for HACS
 ├── LICENSE
 ├── .github/
 │   └── workflows/
 │       ├── hassfest.yaml                 # home-assistant/actions/hassfest@master
 │       ├── hacs.yaml                     # hacs/action@main
-│       └── tests.yaml                    # pytest mit pytest-homeassistant-custom-component
+│       └── tests.yaml                    # pytest with pytest-homeassistant-custom-component
 ├── custom_components/
-│   └── heatpump_xy/                      # Domain – muss exakt manifest.json:domain entsprechen
+│   └── heatpump_xy/                      # Domain — must match manifest.json:domain exactly
 │       ├── __init__.py                   # async_setup_entry / async_unload_entry
-│       ├── manifest.json                 # Pflicht
+│       ├── manifest.json                 # Required
 │       ├── const.py                      # DOMAIN, CONF_*, defaults
 │       ├── config_flow.py                # ConfigFlow + OptionsFlow
 │       ├── coordinator.py                # DataUpdateCoordinator
-│       ├── entity.py                     # gemeinsame Basisklasse (CoordinatorEntity)
-│       ├── api.py                        # API-Client-Wrapper (oder externes PyPI-Package)
-│       ├── sensor.py                     # Plattform: Sensoren
-│       ├── climate.py                    # Plattform: Climate-Entity
-│       ├── binary_sensor.py              # falls nötig
+│       ├── entity.py                     # Shared base class (CoordinatorEntity)
+│       ├── api.py                        # API-client wrapper (or external PyPI package)
+│       ├── sensor.py                     # Platform: sensors
+│       ├── climate.py                    # Platform: climate entity
+│       ├── binary_sensor.py              # if needed
 │       ├── number.py / select.py / switch.py
-│       ├── diagnostics.py                # Pflicht ab Gold
-│       ├── repairs.py                    # falls Repair-Flows existieren
-│       ├── services.yaml                 # nur wenn eigene Services registriert
-│       ├── strings.json                  # UI-Strings (Quelle für en.json)
+│       ├── diagnostics.py                # Required from Gold
+│       ├── repairs.py                    # if repair flows exist
+│       ├── services.yaml                 # only when custom services are registered
+│       ├── strings.json                  # UI strings (source for en.json)
 │       ├── translations/
 │       │   ├── en.json
 │       │   └── de.json
-│       ├── icons.json                    # Icon-Translations (Gold-Regel)
-│       ├── quality_scale.yaml            # Pflicht sobald ein Quality-Scale-Level angestrebt wird
-│       └── brand/                        # ab HA 2026.3 lokal möglich (siehe §17.3)
+│       ├── icons.json                    # Icon translations (Gold rule)
+│       ├── quality_scale.yaml            # Required as soon as a quality-scale level is targeted
+│       └── brand/                        # Possible locally from HA 2026.3 on (see §17.3)
 │           ├── icon.png
 │           ├── icon@2x.png
 │           ├── logo.png
 │           └── logo@2x.png
-└── tests/                                # nicht im HACS-Download enthalten
+└── tests/                                # not included in the HACS download
     ├── __init__.py
     ├── conftest.py
     ├── test_config_flow.py
@@ -73,26 +73,26 @@ heatpump_xy/                              # GitHub‑Repo‑Root
     ├── test_sensor.py
     ├── fixtures/
     │   └── status_response.json
-    └── snapshots/                        # syrupy-Snapshots
+    └── snapshots/                        # syrupy snapshots
 ```
 
-**Wichtig:**
-- HACS erwartet die Integration unter `custom_components/<domain>/`. Bei einem späteren Core‑Merge wandert genau dieses Verzeichnis nach `homeassistant/components/<domain>/` – die `tests/` werden zu `tests/components/<domain>/`.
-- Der Verzeichnisname `heatpump_xy` **muss** dem `domain`‑Feld in `manifest.json` exakt entsprechen, sonst schlägt hassfest fehl.
+**Important:**
+- HACS expects the integration under `custom_components/<domain>/`. On a later Core merge, exactly this directory moves to `homeassistant/components/<domain>/` — and the `tests/` become `tests/components/<domain>/`.
+- The directory name `heatpump_xy` **must** match the `domain` field in `manifest.json` exactly, otherwise hassfest fails.
 
-Referenzen:
+References:
 - <https://developers.home-assistant.io/docs/creating_integration_file_structure/>
 - <https://hacs.xyz/docs/publish/integration/>
 
-### 1.2 Empfohlener Startpunkt
+### 1.2 Recommended starting point
 
-Das offizielle **`integration_blueprint`** Repo (<https://github.com/home-assistant/integration_blueprint>) ist die kanonische Vorlage. Es enthält Coordinator, Config Flow, Sensor‑Plattform, Tests und HACS‑Konformität – darauf aufsetzen statt von Null beginnen.
+The official **`integration_blueprint`** repo (<https://github.com/home-assistant/integration_blueprint>) is the canonical template. It contains coordinator, config flow, sensor platform, tests, and HACS compliance — build on top of it rather than starting from scratch.
 
 ---
 
 ## 2. `manifest.json`
 
-### 2.1 Vollständiges Schema (Core‑Quelle: `homeassistant/loader.py`)
+### 2.1 Complete schema (Core source: `homeassistant/loader.py`)
 
 ```json
 {
@@ -119,32 +119,32 @@ Das offizielle **`integration_blueprint`** Repo (<https://github.com/home-assist
 }
 ```
 
-### 2.2 Feldweise Pflicht/Optional und HACS vs Core
+### 2.2 Field-by-field required/optional and HACS vs Core
 
-| Feld | Custom (HACS) | Core | Hinweis |
+| Field | Custom (HACS) | Core | Note |
 |---|---|---|---|
-| `domain` | Pflicht | Pflicht | Lowercase + Underscore, == Verzeichnisname |
-| `name` | Pflicht | Pflicht | Bei „Cloud" Suffix auch „Cloud" anhängen; lokal kein Suffix |
-| `version` | **Pflicht** für Custom | **Verboten** für Core | HACS lehnt Manifest ohne `version` ab; Core wird via `pip` getrackt |
-| `codeowners` | Pflicht (≥ 1 GitHub‑Handle) | Pflicht | Silver: aktive Maintainer (`integration-owner`) |
-| `config_flow` | `true` | `true` | YAML‑Setup ist tot, ADR‑0010 |
-| `documentation` | Pflicht | Pflicht (`https://www.home-assistant.io/integrations/<domain>`) | Custom: GitHub‑README oder eigene Seite |
-| `issue_tracker` | Pflicht | weglassen (auto‑generiert) | |
-| `integration_type` | `device` / `hub` / `service` / `helper` / `system` / `hardware` / `entity` / `virtual` | dito | Wärmepumpe = `device` (ein physisches Gerät pro Entry). Ein zentrales LAN‑Gateway für mehrere Geräte = `hub`. |
-| `iot_class` | Pflicht | Pflicht | Für lokale Wärmepumpe: `local_polling` (oder `local_push` falls Push) |
-| `requirements` | Pflicht (PyPI‑Pin) | Pflicht (PyPI‑Pin) | **Immer exakt** pinnen: `paket==1.2.3` |
-| `dependencies` | optional | optional | Soft via `after_dependencies` (z. B. `zeroconf`) |
-| `loggers` | optional | empfohlen | Liste der Logger‑Namen der Library, damit User Debug aktivieren können |
-| `quality_scale` | weglassen oder eigener Wert | required ab Bronze | Custom default = `custom` |
-| `zeroconf` / `dhcp` / `ssdp` / `bluetooth` / `usb` | optional | optional | Triggern Discovery (siehe §4.5) |
-| `single_config_entry` | optional | optional | Wenn nur eine Instanz Sinn ergibt |
+| `domain` | Required | Required | Lowercase + underscore, == directory name |
+| `name` | Required | Required | For "Cloud" variants append "Cloud" too; local has no suffix |
+| `version` | **Required** for Custom | **Forbidden** for Core | HACS rejects manifests without `version`; Core is tracked via `pip` |
+| `codeowners` | Required (≥ 1 GitHub handle) | Required | Silver: active maintainer (`integration-owner`) |
+| `config_flow` | `true` | `true` | YAML setup is dead, ADR-0010 |
+| `documentation` | Required | Required (`https://www.home-assistant.io/integrations/<domain>`) | Custom: GitHub README or your own page |
+| `issue_tracker` | Required | omit (auto-generated) | |
+| `integration_type` | `device` / `hub` / `service` / `helper` / `system` / `hardware` / `entity` / `virtual` | same | Heat pump = `device` (one physical device per entry). A central LAN gateway for multiple devices = `hub`. |
+| `iot_class` | Required | Required | For a local heat pump: `local_polling` (or `local_push` if push) |
+| `requirements` | Required (PyPI pin) | Required (PyPI pin) | **Always pin exactly**: `package==1.2.3` |
+| `dependencies` | optional | optional | Soft via `after_dependencies` (e.g. `zeroconf`) |
+| `loggers` | optional | recommended | List of the library's logger names so users can enable debug |
+| `quality_scale` | omit or custom value | required from Bronze | Custom default = `custom` |
+| `zeroconf` / `dhcp` / `ssdp` / `bluetooth` / `usb` | optional | optional | Trigger discovery (see §4.5) |
+| `single_config_entry` | optional | optional | When only one instance makes sense |
 
-**Stolperfallen:**
-- `version` muss SemVer sein und mit dem GitHub‑Release‑Tag korrespondieren.
-- Bei Core‑Submission **dürfen** `version` und `issue_tracker` **nicht** drin sein (hassfest weist sie zurück).
-- `iot_class` Werte: `assumed_state | cloud_polling | cloud_push | local_polling | local_push | calculated`.
+**Pitfalls:**
+- `version` must be SemVer and must correspond to the GitHub release tag.
+- For Core submission, `version` and `issue_tracker` **must not** be included (hassfest rejects them).
+- `iot_class` values: `assumed_state | cloud_polling | cloud_push | local_polling | local_push | calculated`.
 
-Quellen:
+Sources:
 - <https://developers.home-assistant.io/docs/creating_integration_manifest/>
 - <https://github.com/home-assistant/core/blob/dev/homeassistant/loader.py>
 
@@ -152,7 +152,7 @@ Quellen:
 
 ## 3. `hacs.json`
 
-Im **Repo‑Root**, nicht im Component‑Verzeichnis.
+At the **repo root**, not inside the component directory.
 
 ```json
 {
@@ -165,18 +165,18 @@ Im **Repo‑Root**, nicht im Component‑Verzeichnis.
 }
 ```
 
-| Feld | Beschreibung |
+| Field | Description |
 |---|---|
-| `name` | Pflicht. Anzeigename in HACS |
-| `homeassistant` | Mindestversion HA Core – User unter dieser Version sehen die Integration nicht |
-| `hacs` | Mindestversion HACS. **Achtung:** HACS hat seit 2.0.0 mit der 1.x‑Reihe gebrochen und benötigt selbst HA 2024.4.1+. Keine `1.34.0` mehr eintragen, sondern `2.0.0` als Minimum nutzen. |
-| `render_readme` | `true` → README.md statt info.md anzeigen. Sonst muss `info.md` existieren |
-| `country` | ISO‑Codes; nur relevant wenn regional. Für Wärmepumpe i. d. R. weglassen |
-| `zip_release` | `true` wenn GitHub‑Release ein ZIP enthält. Standard `false` (HACS pulled aus dem Tag) |
-| `filename` | nur bei `zip_release: true` |
+| `name` | Required. Display name in HACS |
+| `homeassistant` | Minimum HA Core version — users below this version won't see the integration |
+| `hacs` | Minimum HACS version. **Caution:** HACS 2.0.0 broke compatibility with the 1.x line and itself requires HA 2024.4.1+. Don't list `1.34.0` anymore; use `2.0.0` as the minimum. |
+| `render_readme` | `true` → display README.md instead of info.md. Otherwise `info.md` must exist |
+| `country` | ISO codes; only relevant if regional. For a heat pump usually omit |
+| `zip_release` | `true` when the GitHub release contains a ZIP. Default `false` (HACS pulls from the tag) |
+| `filename` | only when `zip_release: true` |
 | `hide_default_branch` | optional |
 
-Quellen:
+Sources:
 - <https://hacs.xyz/docs/publish/start/>
 - <https://hacs.xyz/docs/publish/integration/>
 - <https://github.com/hacs/integration/releases>
@@ -185,7 +185,7 @@ Quellen:
 
 ## 4. Config Flow
 
-### 4.1 Grundgerüst
+### 4.1 Skeleton
 
 ```python
 # config_flow.py
@@ -248,23 +248,23 @@ class HeatpumpConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 ```
 
-### 4.2 Pflicht‑Bausteine
+### 4.2 Required building blocks
 
-- **`async_set_unique_id` + `_abort_if_unique_id_configured`** – verhindert Doppel‑Setup. Bei IP‑Änderung via DHCP wird `CONF_HOST` automatisch upgedatet.
-- **`unique_id` als String** (Seriennummer, MAC). Ab HA 2025.10 wird non‑string als Fehler gewertet.
-- **Validate before create**: erst Connection testen, dann `async_create_entry`. Kein „Setup‑Eintrag erzeugen, dann Fehler in `async_setup_entry`".
+- **`async_set_unique_id` + `_abort_if_unique_id_configured`** — prevents duplicate setup. On IP changes via DHCP `CONF_HOST` is updated automatically.
+- **`unique_id` as a string** (serial number, MAC). From HA 2025.10 non-string is treated as an error.
+- **Validate before create**: test the connection first, then `async_create_entry`. No "create the setup entry, then error out in `async_setup_entry`".
 
 ### 4.3 Options Flow vs Reconfigure Flow
 
-- **Options Flow**: für Verhaltens‑Settings nach Setup (z. B. `scan_interval`, „Disabled by default"‑Entitäten). Wird im Config‑Entry Detail als „Configure" angezeigt.
-- **Reconfigure Flow** (Gold‑Regel `reconfiguration-flow`): wenn der User die *Verbindungsdaten* ändern muss (Host, API‑Key) ohne neu hinzuzufügen.
+- **Options Flow**: for behavior settings after setup (e.g. `scan_interval`, "disabled by default" entities). Shown as "Configure" in the config entry details.
+- **Reconfigure Flow** (Gold rule `reconfiguration-flow`): when the user needs to change the *connection data* (host, API key) without re-adding the integration.
 
 ```python
 async def async_step_reconfigure(
     self, user_input: dict[str, Any] | None = None
 ) -> ConfigFlowResult:
     entry = self._get_reconfigure_entry()
-    # validation analog zu async_step_user, dann:
+    # validation analogous to async_step_user, then:
     return self.async_update_reload_and_abort(
         entry, data_updates=user_input
     )
@@ -272,7 +272,7 @@ async def async_step_reconfigure(
 
 ### 4.4 Reauth Flow (Silver `reauthentication-flow`)
 
-Trigger: in `async_setup_entry` oder im Coordinator `raise ConfigEntryAuthFailed` werfen.
+Trigger: raise `ConfigEntryAuthFailed` from `async_setup_entry` or in the coordinator.
 
 ```python
 async def async_step_reauth(
@@ -292,13 +292,13 @@ async def async_step_reauth_confirm(
 
 ### 4.5 Discovery (Gold `discovery`)
 
-Wenn die Wärmepumpe im LAN per mDNS oder DHCP erkennbar ist, in `manifest.json` definieren:
+When the heat pump is detectable on the LAN via mDNS or DHCP, declare it in `manifest.json`:
 
 ```json
 "zeroconf": [{ "type": "_heatpump._tcp.local." }]
 ```
 
-Und im Flow:
+And in the flow:
 
 ```python
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
@@ -318,7 +318,7 @@ async def async_step_zeroconf(
     return await self.async_step_discovery_confirm()
 ```
 
-Quellen:
+Sources:
 - <https://developers.home-assistant.io/docs/config_entries_config_flow_handler/>
 - <https://developers.home-assistant.io/docs/network_discovery/>
 
@@ -326,11 +326,11 @@ Quellen:
 
 ## 5. `DataUpdateCoordinator`
 
-### 5.1 Wann Coordinator?
+### 5.1 When to use a coordinator?
 
-**Immer**, sobald mehrere Entities aus derselben API‑Antwort gespeist werden. Eigene `async_update`‑Methoden pro Entity gegen dieselbe API sind Anti‑Pattern und werden vom Quality‑Check abgelehnt.
+**Always** when multiple entities are fed from the same API response. Per-entity `async_update` methods hitting the same API are an anti-pattern and will be rejected by the quality check.
 
-### 5.2 Polling‑Coordinator (Standardfall)
+### 5.2 Polling coordinator (standard case)
 
 ```python
 # coordinator.py
@@ -355,7 +355,7 @@ class HeatpumpData:
     flow_temp: float
     return_temp: float
     compressor_state: str
-    # ... weitere Felder als typed dataclass
+    # ... further fields as a typed dataclass
 
 type HeatpumpConfigEntry = ConfigEntry[HeatpumpCoordinator]
 
@@ -375,12 +375,12 @@ class HeatpumpCoordinator(DataUpdateCoordinator[HeatpumpData]):
             config_entry=config_entry,
             name=DOMAIN,
             update_interval=SCAN_INTERVAL,
-            always_update=False,  # spart unnötige Listener-Calls
+            always_update=False,  # avoids unnecessary listener calls
         )
         self.client = client
 
     async def _async_setup(self) -> None:
-        """Einmalig vor erstem Refresh – HA 2024.8+."""
+        """Run once before the first refresh — HA 2024.8+."""
         self.device_info = await self.client.async_get_device_info()
 
     async def _async_update_data(self) -> HeatpumpData:
@@ -392,23 +392,23 @@ class HeatpumpCoordinator(DataUpdateCoordinator[HeatpumpData]):
             raise UpdateFailed(f"Heatpump unreachable: {err}") from err
 ```
 
-### 5.3 Push‑Coordinator (`local_push`)
+### 5.3 Push coordinator (`local_push`)
 
-Wenn die Wärmepumpe Webhooks/MQTT/UDP‑Push schickt: `update_interval=None`, und im API‑Client einen Callback registrieren, der `coordinator.async_set_updated_data(new_data)` aufruft. Dadurch profitierst du weiterhin von der Listener‑Logik und `available`/`last_update_success`.
+When the heat pump sends webhooks/MQTT/UDP push: `update_interval=None`, and register a callback in the API client that calls `coordinator.async_set_updated_data(new_data)`. This way you still benefit from the listener logic and `available`/`last_update_success`.
 
-### 5.4 Initial Refresh
+### 5.4 Initial refresh
 
-**Immer** `await coordinator.async_config_entry_first_refresh()` in `async_setup_entry` aufrufen – das wirft korrekt `ConfigEntryNotReady` (Bronze‑Regel `test-before-setup`) und triggert HA's exponential backoff.
+**Always** call `await coordinator.async_config_entry_first_refresh()` in `async_setup_entry` — it correctly raises `ConfigEntryNotReady` (Bronze rule `test-before-setup`) and triggers HA's exponential backoff.
 
-Quellen:
+Sources:
 - <https://developers.home-assistant.io/docs/integration_fetching_data/>
 - <https://developers.home-assistant.io/blog/2024/08/05/coordinator_async_setup/>
 
 ---
 
-## 6. Entity‑Design
+## 6. Entity design
 
-### 6.1 Basis‑Entity in `entity.py`
+### 6.1 Base entity in `entity.py`
 
 ```python
 from __future__ import annotations
@@ -434,7 +434,7 @@ class HeatpumpEntity(CoordinatorEntity[HeatpumpCoordinator]):
         )
 ```
 
-### 6.2 `EntityDescription`‑Pattern (verbindlich)
+### 6.2 `EntityDescription` pattern (mandatory)
 
 ```python
 # sensor.py
@@ -506,20 +506,20 @@ class HeatpumpSensor(HeatpumpEntity, SensorEntity):
         return self.entity_description.value_fn(self.coordinator.data)
 ```
 
-### 6.3 Pflicht‑Attribute pro Entity
+### 6.3 Required attributes per entity
 
-| Attribut | Wofür | Quality‑Scale |
+| Attribute | Purpose | Quality scale |
 |---|---|---|
-| `_attr_unique_id` | stabile ID, idealerweise `<serial>_<key>` | Bronze `entity-unique-id` |
-| `_attr_has_entity_name = True` | Friendly Name = "<Device> <translated key>" | Bronze `has-entity-name` |
-| `translation_key` | Übersetzung in `strings.json` → entity → <platform> → <key>.name | Gold `entity-translations` |
-| `device_class` | wo immer möglich (Temperatur, Power, Energy, …) | Gold `entity-device-class` |
+| `_attr_unique_id` | Stable ID, ideally `<serial>_<key>` | Bronze `entity-unique-id` |
+| `_attr_has_entity_name = True` | Friendly name = "<Device> <translated key>" | Bronze `has-entity-name` |
+| `translation_key` | Translation in `strings.json` → entity → <platform> → <key>.name | Gold `entity-translations` |
+| `device_class` | wherever possible (temperature, power, energy, …) | Gold `entity-device-class` |
 | `state_class` | `MEASUREMENT` / `TOTAL` / `TOTAL_INCREASING` | Gold |
-| `entity_category` | `CONFIG` / `DIAGNOSTIC` für Nicht‑Hauptmesswerte | Gold `entity-category` |
-| `_attr_entity_registry_enabled_default = False` | für selten genutzte / verbose Entities | Gold `entity-disabled-by-default` |
-| `available`‑Property | aus Coordinator: `super().available and self.coordinator.last_update_success` | Silver `entity-unavailable` |
+| `entity_category` | `CONFIG` / `DIAGNOSTIC` for non-primary readings | Gold `entity-category` |
+| `_attr_entity_registry_enabled_default = False` | for rarely used / verbose entities | Gold `entity-disabled-by-default` |
+| `available` property | from coordinator: `super().available and self.coordinator.last_update_success` | Silver `entity-unavailable` |
 
-### 6.4 `available` korrekt herleiten
+### 6.4 Deriving `available` correctly
 
 ```python
 @property
@@ -529,41 +529,41 @@ def available(self) -> bool:
     ) is not None
 ```
 
-Quelle: <https://developers.home-assistant.io/docs/core/entity/>
+Source: <https://developers.home-assistant.io/docs/core/entity/>
 
 ---
 
-## 7. Async/Await Patterns
+## 7. Async/await patterns
 
-- **Niemals blockierendes I/O im Event‑Loop.** `requests`, `urllib`, `socket.recv` ohne async, `time.sleep` → tabu.
-- **Synchrone Bibliothek** → in Executor: `await hass.async_add_executor_job(blocking_call, arg1)`. Für Platinum `async-dependency` muss die Library aber ausschließlich async sein.
-- **HTTP‑Session**:
+- **Never blocking I/O in the event loop.** `requests`, `urllib`, `socket.recv` without async, `time.sleep` → forbidden.
+- **Synchronous library** → run in executor: `await hass.async_add_executor_job(blocking_call, arg1)`. But for Platinum `async-dependency` the library must be async only.
+- **HTTP session**:
   ```python
   from homeassistant.helpers.aiohttp_client import async_get_clientsession
-  session = async_get_clientsession(hass)  # geteilt, auto-cleanup
+  session = async_get_clientsession(hass)  # shared, auto-cleanup
   ```
-  Niemals `aiohttp.ClientSession()` selbst instanziieren in Integrationscode. Quality‑Scale Platinum‑Regel `inject-websession`: Die externe Library muss eine Session als Parameter akzeptieren.
-- **Timeouts**: `async with asyncio.timeout(10):` (Python 3.11+ Stil) statt `async_timeout`.
-- **Context Manager** korrekt benutzen:
+  Never instantiate `aiohttp.ClientSession()` yourself inside integration code. Quality scale Platinum rule `inject-websession`: the external library must accept a session as a parameter.
+- **Timeouts**: `async with asyncio.timeout(10):` (Python 3.11+ style) instead of `async_timeout`.
+- **Context managers** used correctly:
   ```python
   async with session.get(url, timeout=ClientTimeout(total=10)) as resp:
       resp.raise_for_status()
       return await resp.json()
   ```
-- **Kein `asyncio.create_task` ohne Tracking.** Falls nötig: `entry.async_create_background_task(hass, coro, name="heatpump_listener")`.
+- **No `asyncio.create_task` without tracking.** When necessary: `entry.async_create_background_task(hass, coro, name="heatpump_listener")`.
 
 ---
 
-## 8. API‑Client
+## 8. API client
 
-### 8.1 Trennung von HA
+### 8.1 Separation from HA
 
-Die API‑Klasse darf **keine** HA‑Imports enthalten. Sie ist potenziell ein eigenes PyPI‑Package (`pyheatpumpxy`) – das ist die Voraussetzung für `dependency-transparency` und Voraussetzung für Core‑Merge bei nicht‑trivialen Integrationen.
+The API class **must not** contain HA imports. It is potentially its own PyPI package (`pyheatpumpxy`) — that is the prerequisite for `dependency-transparency` and a requirement for Core merge of non-trivial integrations.
 
-### 8.2 Beispiel‑Client
+### 8.2 Example client
 
 ```python
-# api.py (oder externes Package pyheatpumpxy)
+# api.py (or external package pyheatpumpxy)
 from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
@@ -572,11 +572,11 @@ import aiohttp
 
 
 class HeatpumpError(Exception):
-    """Basisklasse."""
+    """Base class."""
 
 
 class CannotConnect(HeatpumpError):
-    """Netzwerk-/HTTP-Fehler."""
+    """Network/HTTP error."""
 
 
 class InvalidAuth(HeatpumpError):
@@ -638,19 +638,19 @@ class HeatpumpClient:
         return State(**raw)
 ```
 
-### 8.3 Retry/Backoff
+### 8.3 Retry/backoff
 
-`DataUpdateCoordinator` macht *Polling* selbst – kein Retry‑Loop dort. Aber bei *einzelnen* Befehlen (z. B. Setpoint setzen): `tenacity` oder ein einfacher 3‑facher Retry mit exponential backoff bei `CannotConnect` ist akzeptabel.
+`DataUpdateCoordinator` handles *polling* itself — no retry loop there. But for *individual* commands (e.g. setting a setpoint): `tenacity` or a simple 3x retry with exponential backoff on `CannotConnect` is acceptable.
 
 ---
 
-## 9. Type Hints und Modernes Python
+## 9. Type hints and modern Python
 
-- **Python 3.13** wurde mit HA Core 2024.12 für HA OS / Container ausgeliefert (automatisches Upgrade laut Release‑Blog) und ist seit HA 2025.2 die Pflicht‑Mindestversion für eigene Core‑Installationen. Du darfst `match`, `Self`, `type X = ...` Aliasse, `Generic[T]` mit `class C[T]:`‑Syntax verwenden.
-- **`from __future__ import annotations`** in jeder Datei oben.
-- Für Datenstrukturen: `dataclass` (mit `slots=True, kw_only=True`), für API‑Responses optional `pydantic` v2 oder `mashumaro`. Pure dict ist Anti‑Pattern.
-- **`py.typed`** Marker im Custom‑Component‑Verzeichnis ist nicht erforderlich (es ist kein Package), aber im **externen API‑Package** Pflicht (Platinum `strict-typing`).
-- Strict typing aktivieren:
+- **Python 3.13** shipped with HA Core 2024.12 for HA OS / container (automatic upgrade per release blog) and has been the minimum required version for self-managed Core installations since HA 2025.2. You may use `match`, `Self`, `type X = ...` aliases, `Generic[T]` with the `class C[T]:` syntax.
+- **`from __future__ import annotations`** at the top of every file.
+- For data structures: `dataclass` (with `slots=True, kw_only=True`), for API responses optionally `pydantic` v2 or `mashumaro`. A bare dict is an anti-pattern.
+- **`py.typed`** marker in the custom-component directory is not required (it isn't a package), but it is required in the **external API package** (Platinum `strict-typing`).
+- Enable strict typing:
   ```toml
   # pyproject.toml
   [tool.mypy]
@@ -662,7 +662,7 @@ class HeatpumpClient:
 
 ## 10. Translations
 
-### 10.1 `strings.json` (Quelldatei – Englisch)
+### 10.1 `strings.json` (source file — English)
 
 ```json
 {
@@ -714,13 +714,13 @@ class HeatpumpClient:
 }
 ```
 
-### 10.2 Übersetzungen
+### 10.2 Translations
 
-`translations/en.json` ist eine 1:1 Kopie von `strings.json` (das ist HA‑Konvention; im Core wird sie automatisch generiert via Lokalise, im Custom‑Component musst du sie selbst bereitstellen).
+`translations/en.json` is a 1:1 copy of `strings.json` (that's HA convention; in Core it is generated automatically via Lokalise, in a custom component you have to provide it yourself).
 
-`translations/de.json` analog mit deutschen Strings.
+`translations/de.json` analogously with German strings.
 
-### 10.3 Icon‑Translations (Gold `icon-translations`)
+### 10.3 Icon translations (Gold `icon-translations`)
 
 ```json
 // icons.json
@@ -737,13 +737,13 @@ class HeatpumpClient:
 }
 ```
 
-Hassfest validiert hier, dass nur `mdi:`‑Präfixe vorkommen.
+Hassfest validates here that only `mdi:` prefixes are used.
 
-Quelle: <https://developers.home-assistant.io/docs/internationalization/>
+Source: <https://developers.home-assistant.io/docs/internationalization/>
 
 ---
 
-## 11. Services / Actions
+## 11. Services / actions
 
 ### 11.1 `services.yaml`
 
@@ -765,9 +765,9 @@ set_setpoint:
           unit_of_measurement: "°C"
 ```
 
-### 11.2 Registrierung
+### 11.2 Registration
 
-Services in **`async_setup`**, nicht in `async_setup_entry`. Damit existieren sie auch ohne geladenen Entry und Automations können sie referenzieren.
+Register services in **`async_setup`**, not in `async_setup_entry`. That way they exist even without a loaded entry and automations can reference them.
 
 ```python
 # __init__.py
@@ -797,7 +797,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 ```
 
-Quelle: <https://developers.home-assistant.io/docs/dev_101_services/>
+Source: <https://developers.home-assistant.io/docs/dev_101_services/>
 
 ---
 
@@ -830,9 +830,9 @@ async def async_get_config_entry_diagnostics(
     }
 ```
 
-Pflicht ab **Gold** (`diagnostics`). Sensible Felder *immer* redacten – Diagnostics werden im Klartext in GitHub‑Issues gepostet.
+Required from **Gold** (`diagnostics`). Always redact sensitive fields — diagnostics are posted as plain text in GitHub issues.
 
-Quelle: <https://developers.home-assistant.io/docs/core/integration/diagnostics/>
+Source: <https://developers.home-assistant.io/docs/core/integration/diagnostics/>
 
 ---
 
@@ -855,31 +855,31 @@ ir.async_create_issue(
 ```
 
 - `severity`: `CRITICAL | ERROR | WARNING`
-- `is_fixable=True` + `repairs.py` mit `RepairsFlow` für interaktive Lösung
-- `is_persistent=True` → bleibt nach HA‑Restart sichtbar
+- `is_fixable=True` + `repairs.py` with `RepairsFlow` for an interactive resolution
+- `is_persistent=True` → stays visible after an HA restart
 
-Quelle: <https://developers.home-assistant.io/docs/core/platform/repairs/>
+Source: <https://developers.home-assistant.io/docs/core/platform/repairs/>
 
 ---
 
 ## 14. Logging
 
 ```python
-# Modul-weit
+# Module-wide
 _LOGGER = logging.getLogger(__name__)
 
-# Verwendung
-_LOGGER.debug("Heatpump state: %s", state)        # ja, lazy formatting
+# Usage
+_LOGGER.debug("Heatpump state: %s", state)        # yes, lazy formatting
 _LOGGER.warning("Retrying after %.1fs", delay)
 _LOGGER.error("Setpoint failed: %s", err)
-# nie: _LOGGER.info(f"Heatpump {host} polled")    # nein, kein f-string in log
-# nie: print(...)
+# never: _LOGGER.info(f"Heatpump {host} polled")    # no, no f-string in logs
+# never: print(...)
 ```
 
-Regeln (Silver `log-when-unavailable`):
-- **Kein Spam.** Bei Verbindungsverlust: einmal `warning` beim ersten Fehlschlag, einmal `info` bei Recovery. `DataUpdateCoordinator` macht das automatisch, eigene Logs nur wenn nötig.
-- **Kein `info` bei normalem Betrieb.** `debug` für Telemetrie, `info` nur für Lifecycle (Setup, Unload).
-- **Logger‑Namen** in `manifest.json` `loggers` eintragen.
+Rules (Silver `log-when-unavailable`):
+- **No spam.** On connection loss: one `warning` on the first failure, one `info` on recovery. `DataUpdateCoordinator` does this automatically; only add your own logs when needed.
+- **No `info` during normal operation.** `debug` for telemetry, `info` only for lifecycle (setup, unload).
+- Add **logger names** in `manifest.json` under `loggers` so users can enable debug.
 
 ---
 
@@ -919,7 +919,7 @@ def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
     return snapshot.use_extension(HomeAssistantSnapshotExtension)
 ```
 
-### 15.3 Config‑Flow‑Test
+### 15.3 Config flow test
 
 ```python
 from unittest.mock import AsyncMock, patch
@@ -945,7 +945,7 @@ async def test_user_flow_happy_path(hass):
         assert result["data"]["host"] == "10.0.0.5"
 ```
 
-### 15.4 Snapshot‑Tests für Sensoren
+### 15.4 Snapshot tests for sensors
 
 ```python
 async def test_sensors(hass, snapshot, init_integration):
@@ -953,12 +953,12 @@ async def test_sensors(hass, snapshot, init_integration):
     assert state == snapshot
 ```
 
-Erstellung der Snapshots: `pytest --snapshot-update`.
+Creating snapshots: `pytest --snapshot-update`.
 
 ### 15.5 Coverage
 
-- Bronze fordert `config-flow-test-coverage` = **100 %** für `config_flow.py`.
-- Silver fordert `test-coverage` ≥ **95 %** insgesamt.
+- Bronze requires `config-flow-test-coverage` = **100%** for `config_flow.py`.
+- Silver requires `test-coverage` ≥ **95%** overall.
 
 ```bash
 pytest tests/ \
@@ -967,7 +967,7 @@ pytest tests/ \
   --cov-fail-under=95
 ```
 
-Quellen:
+Sources:
 - <https://developers.home-assistant.io/docs/development_testing/>
 - <https://github.com/MatthewFlamm/pytest-homeassistant-custom-component>
 
@@ -975,84 +975,84 @@ Quellen:
 
 ## 16. Quality Scale
 
-### 16.1 Tiers (Stand: offizielle Checklist Nov 2024, validiert für HA 2026.x)
+### 16.1 Tiers (as of: official checklist Nov 2024, validated for HA 2026.x)
 
-Es gibt **4 skalierte Tiers** (Bronze → Silver → Gold → Platinum). Jeder höhere Tier inkludiert alle Regeln der niedrigeren Tiers. Daneben **4 Spezial‑Tiers**: `no_score`, `internal`, `legacy`, `custom`.
+There are **4 scaled tiers** (Bronze → Silver → Gold → Platinum). Each higher tier includes all rules of the lower tiers. Alongside them are **4 special tiers**: `no_score`, `internal`, `legacy`, `custom`.
 
-Quelle der vollständigen Liste: <https://developers.home-assistant.io/docs/core/integration-quality-scale/checklist/> (kanonisch, Stand 20. Nov 2024).
+Source for the full list: <https://developers.home-assistant.io/docs/core/integration-quality-scale/checklist/> (canonical, as of 20 Nov 2024).
 
-### 16.2 Vollständige Regelliste (52 Regeln: 18 + 10 + 21 + 3)
+### 16.2 Full rule list (52 rules: 18 + 10 + 21 + 3)
 
-#### 🥉 Bronze (18) – Pflicht für jede neue Integration
+#### 🥉 Bronze (18) – required for every new integration
 
-| Slug | Bedeutung |
+| Slug | Meaning |
 |---|---|
-| `action-setup` | Services in `async_setup` registrieren, nicht `async_setup_entry`. |
-| `appropriate-polling` | Sinnvolles Default‑Polling‑Intervall (nicht zu schnell, nicht zu langsam). |
-| `brands` | Logo/Icon im `home-assistant/brands` Repo (Core) bzw. `brand/` lokal (Custom ab 2026.3). |
-| `common-modules` | Coordinator in `coordinator.py`, Basis‑Entity in `entity.py`. |
-| `config-flow` | UI‑Setup, mit `data_description` für Kontext, `data` vs `options` korrekt getrennt. |
-| `config-flow-test-coverage` | 100 % Coverage im Config Flow. |
-| `dependency-transparency` | Externe Lib auf PyPI, Open Source, Build aus inspizierbarem Source. |
-| `docs-actions` | Doku beschreibt jede Service Action. |
-| `docs-high-level-description` | Doku beschreibt das Produkt/den Service. |
-| `docs-installation-instructions` | Schritt‑für‑Schritt Setup‑Anleitung. |
-| `docs-removal-instructions` | Wie sauber deinstallieren. |
-| `entity-event-setup` | Subscriptions in `async_added_to_hass` / Cleanup in `async_will_remove_from_hass`. |
-| `entity-unique-id` | Stabile `unique_id` pro Entity. |
+| `action-setup` | Register services in `async_setup`, not `async_setup_entry`. |
+| `appropriate-polling` | Sensible default polling interval (not too fast, not too slow). |
+| `brands` | Logo/icon in the `home-assistant/brands` repo (Core) or `brand/` locally (Custom from 2026.3). |
+| `common-modules` | Coordinator in `coordinator.py`, base entity in `entity.py`. |
+| `config-flow` | UI setup, with `data_description` for context, `data` vs `options` correctly separated. |
+| `config-flow-test-coverage` | 100% coverage in the config flow. |
+| `dependency-transparency` | External library on PyPI, open source, built from inspectable source. |
+| `docs-actions` | Docs describe every service action. |
+| `docs-high-level-description` | Docs describe the product/service. |
+| `docs-installation-instructions` | Step-by-step setup guide. |
+| `docs-removal-instructions` | How to uninstall cleanly. |
+| `entity-event-setup` | Subscriptions in `async_added_to_hass` / cleanup in `async_will_remove_from_hass`. |
+| `entity-unique-id` | Stable `unique_id` per entity. |
 | `has-entity-name` | `_attr_has_entity_name = True`. |
-| `runtime-data` | `ConfigEntry.runtime_data` statt `hass.data[DOMAIN][...]`. |
-| `test-before-configure` | Verbindung wird vor `async_create_entry` getestet. |
-| `test-before-setup` | `ConfigEntryNotReady` / `ConfigEntryAuthFailed` in Setup. |
-| `unique-config-entry` | Doppel‑Setup verhindert. |
+| `runtime-data` | `ConfigEntry.runtime_data` instead of `hass.data[DOMAIN][...]`. |
+| `test-before-configure` | Connection is tested before `async_create_entry`. |
+| `test-before-setup` | `ConfigEntryNotReady` / `ConfigEntryAuthFailed` raised during setup. |
+| `unique-config-entry` | Duplicate setup prevented. |
 
-#### 🥈 Silver (10) – Stabilität zur Laufzeit
+#### 🥈 Silver (10) – runtime stability
 
-| Slug | Bedeutung |
+| Slug | Meaning |
 |---|---|
-| `action-exceptions` | `ServiceValidationError` / `HomeAssistantError` in Services. |
-| `config-entry-unloading` | `async_unload_entry` sauber implementiert. |
-| `docs-configuration-parameters` | Doku beschreibt alle Options‑Parameter. |
-| `docs-installation-parameters` | Doku beschreibt alle Setup‑Felder. |
-| `entity-unavailable` | Entity wird `unavailable` bei API‑Verlust. |
-| `integration-owner` | ≥ 1 aktiver Codeowner. |
-| `log-when-unavailable` | Einmal Fehler, einmal Recovery, kein Spam. |
-| `parallel-updates` | `PARALLEL_UPDATES` explizit in jeder Plattformdatei. |
-| `reauthentication-flow` | Reauth Flow implementiert. |
-| `test-coverage` | ≥ 95 % Test Coverage. |
+| `action-exceptions` | `ServiceValidationError` / `HomeAssistantError` in services. |
+| `config-entry-unloading` | `async_unload_entry` implemented cleanly. |
+| `docs-configuration-parameters` | Docs describe every options parameter. |
+| `docs-installation-parameters` | Docs describe every setup field. |
+| `entity-unavailable` | Entity becomes `unavailable` on API loss. |
+| `integration-owner` | ≥ 1 active codeowner. |
+| `log-when-unavailable` | One error, one recovery, no spam. |
+| `parallel-updates` | `PARALLEL_UPDATES` explicit in every platform file. |
+| `reauthentication-flow` | Reauth flow implemented. |
+| `test-coverage` | ≥ 95% test coverage. |
 
-#### 🥇 Gold (21) – beste UX
+#### 🥇 Gold (21) – best UX
 
-| Slug | Bedeutung |
+| Slug | Meaning |
 |---|---|
-| `devices` | Korrekter Eintrag im Device Registry (Manufacturer, Model, sw_version, identifiers). |
-| `diagnostics` | Diagnostics‑Plattform mit Redaction. |
-| `discovery` | Auto‑Discovery via Zeroconf/SSDP/DHCP/Bluetooth/USB wenn möglich. |
-| `discovery-update-info` | IP‑Update via Discovery (DHCP) wird übernommen. |
-| `docs-data-update` | Doku beschreibt Push vs Poll, Intervalle. |
-| `docs-examples` | Automation‑Beispiele in der Doku. |
-| `docs-known-limitations` | Bekannte Limitationen dokumentiert. |
-| `docs-supported-devices` | Liste unterstützter Modelle. |
-| `docs-supported-functions` | Liste der bereitgestellten Plattformen/Entities. |
-| `docs-troubleshooting` | Troubleshooting‑Sektion. |
-| `docs-use-cases` | Use‑Case‑Beschreibungen. |
-| `dynamic-devices` | Geräte, die nach Setup hinzukommen, werden automatisch erkannt. |
-| `entity-category` | `EntityCategory.CONFIG` / `DIAGNOSTIC` korrekt gesetzt. |
-| `entity-device-class` | `device_class` wo immer möglich. |
-| `entity-disabled-by-default` | Selten genutzte Entities default disabled. |
-| `entity-translations` | Entity‑Namen via `translation_key`. |
-| `exception-translations` | Exception‑Messages mit `translation_domain`/`translation_key`. |
-| `icon-translations` | `icons.json` statt hardcoded `mdi:`. |
-| `reconfiguration-flow` | `async_step_reconfigure` implementiert. |
-| `repair-issues` | `ir.async_create_issue` statt stiller Logfehler. |
-| `stale-devices` | Entfernte Geräte werden auch in HA entfernt. |
+| `devices` | Correct entry in the device registry (manufacturer, model, sw_version, identifiers). |
+| `diagnostics` | Diagnostics platform with redaction. |
+| `discovery` | Auto-discovery via Zeroconf/SSDP/DHCP/Bluetooth/USB when possible. |
+| `discovery-update-info` | IP update via discovery (DHCP) is applied. |
+| `docs-data-update` | Docs describe push vs poll, intervals. |
+| `docs-examples` | Automation examples in the docs. |
+| `docs-known-limitations` | Known limitations documented. |
+| `docs-supported-devices` | List of supported models. |
+| `docs-supported-functions` | List of provided platforms/entities. |
+| `docs-troubleshooting` | Troubleshooting section. |
+| `docs-use-cases` | Use-case descriptions. |
+| `dynamic-devices` | Devices added after setup are recognised automatically. |
+| `entity-category` | `EntityCategory.CONFIG` / `DIAGNOSTIC` set correctly. |
+| `entity-device-class` | `device_class` wherever possible. |
+| `entity-disabled-by-default` | Rarely used entities disabled by default. |
+| `entity-translations` | Entity names via `translation_key`. |
+| `exception-translations` | Exception messages with `translation_domain`/`translation_key`. |
+| `icon-translations` | `icons.json` instead of hardcoded `mdi:`. |
+| `reconfiguration-flow` | `async_step_reconfigure` implemented. |
+| `repair-issues` | `ir.async_create_issue` instead of silent log errors. |
+| `stale-devices` | Removed devices are also removed in HA. |
 
-#### 🏆 Platinum (3) – technische Exzellenz
+#### 🏆 Platinum (3) – technical excellence
 
-| Slug | Bedeutung |
+| Slug | Meaning |
 |---|---|
-| `async-dependency` | Library ist vollständig async (kein Executor‑Wrapping). |
-| `inject-websession` | Lib akzeptiert externe `aiohttp.ClientSession`. |
+| `async-dependency` | Library is fully async (no executor wrapping). |
+| `inject-websession` | Library accepts an external `aiohttp.ClientSession`. |
 | `strict-typing` | `mypy --strict` clean. |
 
 ### 16.3 `quality_scale.yaml`
@@ -1086,17 +1086,17 @@ rules:
   # ...
 ```
 
-Hassfest validiert: jeder im Manifest deklarierte Tier zwingt zu vollständigem `done`/`exempt` aller Regeln dieses Tiers und darunter. Exemptions **brauchen** einen `comment`.
+Hassfest validates: every tier declared in the manifest forces complete `done`/`exempt` of all rules of that tier and below. Exemptions **require** a `comment`.
 
-### 16.4 Manifest‑Eintrag
+### 16.4 Manifest entry
 
 ```json
 "quality_scale": "bronze"
 ```
 
-Erst auf `silver`/`gold`/`platinum` upgraden, **wenn alle Regeln tatsächlich erfüllt** und ein PR den Upgrade dokumentiert.
+Only upgrade to `silver`/`gold`/`platinum` **when all rules are actually met** and a PR documents the upgrade.
 
-Quellen:
+Sources:
 - <https://developers.home-assistant.io/docs/core/integration-quality-scale/>
 - <https://developers.home-assistant.io/docs/core/integration-quality-scale/checklist/>
 - <https://github.com/home-assistant/architecture/blob/master/adr/0022-integration-quality-scale.md>
@@ -1104,15 +1104,15 @@ Quellen:
 
 ---
 
-## 17. HACS‑Spezifika
+## 17. HACS specifics
 
-### 17.1 Pflicht‑Dateien (Repository‑Root)
+### 17.1 Required files (repository root)
 
-- `README.md` – ist sichtbar in HACS, wenn `render_readme: true`
-- `hacs.json` – siehe §3
-- `LICENSE` – HACS rejected ohne
-- `custom_components/<domain>/manifest.json` mit `version` und `documentation`
-- GitHub‑**Releases** (Tags allein reichen *nicht*) mit SemVer (`v0.1.0`)
+- `README.md` — visible in HACS when `render_readme: true`
+- `hacs.json` — see §3
+- `LICENSE` — HACS rejects without it
+- `custom_components/<domain>/manifest.json` with `version` and `documentation`
+- GitHub **releases** (tags alone are *not* enough) with SemVer (`v0.1.0`)
 
 ### 17.2 GitHub Actions
 
@@ -1135,80 +1135,80 @@ jobs:
           category: integration
 ```
 
-### 17.3 Brands / Logo
+### 17.3 Brands / logo
 
-Drei Wege, je nach Reife:
+Three routes, depending on maturity:
 
-1. **Custom (HACS), HA ≥ 2026.3**: lokales `custom_components/heatpump_xy/brand/` mit `icon.png` (256×256), `icon@2x.png` (512×512), `logo.png`, `logo@2x.png`. Wird über HA's Brands‑Proxy ausgeliefert.
-2. **Custom (HACS), HA < 2026.3**: PR an `home-assistant/brands` im Ordner `custom_integrations/<domain>/`.
-3. **Core‑Submission**: PR an `home-assistant/brands` im Ordner `core_integrations/<domain>/`. Logo darf **nicht** das HA‑Logo enthalten.
+1. **Custom (HACS), HA ≥ 2026.3**: local `custom_components/heatpump_xy/brand/` with `icon.png` (256×256), `icon@2x.png` (512×512), `logo.png`, `logo@2x.png`. Served via HA's brands proxy.
+2. **Custom (HACS), HA < 2026.3**: PR to `home-assistant/brands` in the `custom_integrations/<domain>/` folder.
+3. **Core submission**: PR to `home-assistant/brands` in the `core_integrations/<domain>/` folder. The logo **must not** contain the HA logo.
 
-Spezifikation: 1:1 Aspect Ratio Icon, square; Logo darf landscape sein. PNG, transparenter Hintergrund.
+Specification: 1:1 aspect ratio icon, square; logo may be landscape. PNG, transparent background.
 
-### 17.4 Default Store (optional)
+### 17.4 Default store (optional)
 
-Damit User die Integration ohne „Custom Repository" finden, PR an `hacs/default`. Die Repo muss dort alphabetisch korrekt eingefügt werden.
+So users can find the integration without "custom repository", PR to `hacs/default`. The repo must be inserted in correct alphabetical order.
 
-Quellen:
+Sources:
 - <https://hacs.xyz/docs/publish/integration/>
 - <https://github.com/home-assistant/brands>
 - <https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api/>
 
 ---
 
-## 18. Core‑Contribution (Zusatz‑Anforderungen)
+## 18. Core contribution (additional requirements)
 
-Wenn die Integration langfristig nach `homeassistant/components/heatpump_xy/` mergen soll:
+If the integration is to merge to `homeassistant/components/heatpump_xy/` long-term:
 
-1. **`version`** und **`issue_tracker`** aus `manifest.json` **entfernen**.
-2. **`requirements`** wird in `homeassistant/components/heatpump_xy/manifest.json` mit exakt gepinnter PyPI‑Version eingetragen (z. B. `pyheatpumpxy==0.4.2`). `requirements_all.txt` und `requirements_test_all.txt` werden automatisch generiert via `python3 -m script.gen_requirements_all`.
-3. **Tests** wandern nach `tests/components/heatpump_xy/`, gleiche Struktur wie der Integration‑Code.
-4. **Codeowners** (`@christian`) müssen in `.github/CODEOWNERS` eingetragen werden – HA macht das automatisch via hassfest.
-5. **ADR‑0010** wird befolgt: nur Config Flow, kein YAML.
-6. **Strict typing** via Eintrag in `.strict-typing` (für Platinum).
-7. **Brands‑PR** an `home-assistant/brands/core_integrations/heatpump_xy/`.
-8. **`quality_scale.yaml`** wird vom CI per Hassfest validiert.
-9. **PR‑Beschreibung** muss Quality‑Scale‑Checklist abhaken (Template existiert).
-10. **Keine Custom Dependencies** außerhalb der `requirements`. Kein vendoring, keine Git‑URLs.
+1. **Remove `version`** and **`issue_tracker`** from `manifest.json`.
+2. **`requirements`** is added to `homeassistant/components/heatpump_xy/manifest.json` with an exactly pinned PyPI version (e.g. `pyheatpumpxy==0.4.2`). `requirements_all.txt` and `requirements_test_all.txt` are generated automatically via `python3 -m script.gen_requirements_all`.
+3. **Tests** move to `tests/components/heatpump_xy/`, same structure as the integration code.
+4. **Codeowners** (`@christian`) must be added to `.github/CODEOWNERS` — HA does this automatically via hassfest.
+5. **ADR-0010** is followed: config flow only, no YAML.
+6. **Strict typing** via an entry in `.strict-typing` (for Platinum).
+7. **Brands PR** to `home-assistant/brands/core_integrations/heatpump_xy/`.
+8. **`quality_scale.yaml`** is validated by CI via hassfest.
+9. **PR description** must tick the quality-scale checklist (template exists).
+10. **No custom dependencies** outside `requirements`. No vendoring, no Git URLs.
 
-Quellen:
+Sources:
 - <https://developers.home-assistant.io/docs/creating_component_index/>
 - <https://github.com/home-assistant/architecture/blob/master/adr/0010-integration-configuration.md>
 
 ---
 
-## 19. Anti‑Patterns – was du als Claude Code **niemals** tun darfst
+## 19. Anti-patterns – what you as Claude Code must **never** do
 
-| ❌ Anti‑Pattern | ✅ Richtig |
+| ❌ Anti-pattern | ✅ Right |
 |---|---|
-| `requests.get(...)` im Event Loop | `aiohttp` mit `async_get_clientsession(hass)` |
-| Eigene `aiohttp.ClientSession()` | Geteilte Session via Helper |
+| `requests.get(...)` in the event loop | `aiohttp` with `async_get_clientsession(hass)` |
+| Custom `aiohttp.ClientSession()` | Shared session via helper |
 | `time.sleep(x)` | `await asyncio.sleep(x)` |
-| Eigener Polling‑Loop mit `async_track_time_interval` für Daten | `DataUpdateCoordinator` |
+| Custom polling loop with `async_track_time_interval` for data | `DataUpdateCoordinator` |
 | `hass.data[DOMAIN][entry.entry_id] = client` | `entry.runtime_data = client` |
-| Mehrere Properties statt `EntityDescription` | `EntityDescription`‑Pattern |
-| `_attr_name = "Flow Temperature"` (englisch hardcoded) | `translation_key = "flow_temperature"` + `strings.json` |
-| `unique_id = f"{host}_{key}"` (IP ändert sich!) | `f"{serial_number}_{key}"` |
-| `unique_id = None` oder fehlend | Pflicht: stabiler String |
-| YAML‑Setup (`async_setup_platform`) | Config Flow only |
-| `Exception` direkt in API‑Code raisen | Custom Exceptions: `CannotConnect`, `InvalidAuth` |
-| `print(...)` zum Debuggen | `_LOGGER.debug(...)` mit `%s` lazy formatting |
-| `_LOGGER.info("Polled %s", host)` jedes Polling | `_LOGGER.debug(...)` |
-| `iot_class: cloud_polling` für lokale Wärmepumpe | `local_polling` |
-| `integration_type: hub` für ein einzelnes Gerät | `device` |
-| Service in `async_setup_entry` registrieren | In `async_setup` |
-| API‑Code mit HA‑Imports vermischt | Reine Library, dependency injected |
-| `update_before_add=True` mit Coordinator | Nicht nötig, Coordinator hat bereits Daten |
-| Mutable State in Entity ohne Coordinator | State immer aus `coordinator.data` ziehen |
-| Eigenes `async_update` pro Entity | `_handle_coordinator_update` (kommt von `CoordinatorEntity`) |
-| Synchrone Library aufrufen ohne Executor | `await hass.async_add_executor_job(fn, arg)` |
-| Diagnostics ohne Redaction von API‑Keys | `async_redact_data(..., TO_REDACT)` |
+| Multiple properties instead of `EntityDescription` | `EntityDescription` pattern |
+| `_attr_name = "Flow Temperature"` (English hardcoded) | `translation_key = "flow_temperature"` + `strings.json` |
+| `unique_id = f"{host}_{key}"` (IP changes!) | `f"{serial_number}_{key}"` |
+| `unique_id = None` or missing | Required: a stable string |
+| YAML setup (`async_setup_platform`) | Config flow only |
+| Raising `Exception` directly in API code | Custom exceptions: `CannotConnect`, `InvalidAuth` |
+| `print(...)` for debugging | `_LOGGER.debug(...)` with `%s` lazy formatting |
+| `_LOGGER.info("Polled %s", host)` every poll | `_LOGGER.debug(...)` |
+| `iot_class: cloud_polling` for a local heat pump | `local_polling` |
+| `integration_type: hub` for a single device | `device` |
+| Service registered in `async_setup_entry` | In `async_setup` |
+| API code mixed with HA imports | Pure library, dependency injected |
+| `update_before_add=True` with coordinator | Not needed, the coordinator already has data |
+| Mutable state in an entity without a coordinator | Always pull state from `coordinator.data` |
+| Custom `async_update` per entity | `_handle_coordinator_update` (provided by `CoordinatorEntity`) |
+| Calling a synchronous library without executor | `await hass.async_add_executor_job(fn, arg)` |
+| Diagnostics without redacting API keys | `async_redact_data(..., TO_REDACT)` |
 
 ---
 
-## 20. Dokumentations‑Pointer (für Fetch durch Claude Code)
+## 20. Documentation pointers (for Claude Code to fetch)
 
-| Thema | URL |
+| Topic | URL |
 |---|---|
 | Integration File Structure | <https://developers.home-assistant.io/docs/creating_integration_file_structure/> |
 | Manifest | <https://developers.home-assistant.io/docs/creating_integration_manifest/> |
@@ -1230,48 +1230,48 @@ Quellen:
 | Quality Scale Overview | <https://developers.home-assistant.io/docs/core/integration-quality-scale/> |
 | Quality Scale Checklist | <https://developers.home-assistant.io/docs/core/integration-quality-scale/checklist/> |
 | Quality Scale Rules Index | <https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/> |
-| ADR‑0010 (kein YAML) | <https://github.com/home-assistant/architecture/blob/master/adr/0010-integration-configuration.md> |
-| ADR‑0022 (Quality Scale) | <https://github.com/home-assistant/architecture/blob/master/adr/0022-integration-quality-scale.md> |
+| ADR-0010 (no YAML) | <https://github.com/home-assistant/architecture/blob/master/adr/0010-integration-configuration.md> |
+| ADR-0022 (Quality Scale) | <https://github.com/home-assistant/architecture/blob/master/adr/0022-integration-quality-scale.md> |
 | Hassfest GitHub Action | <https://developers.home-assistant.io/blog/2020/04/16/hassfest/> |
 | HACS Integration Publish | <https://hacs.xyz/docs/publish/integration/> |
 | HACS hacs.json Spec | <https://hacs.xyz/docs/publish/start/> |
 | Brands Repo | <https://github.com/home-assistant/brands> |
-| Brands Proxy API (lokale Brands) | <https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api/> |
+| Brands Proxy API (local brands) | <https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api/> |
 | `pytest-homeassistant-custom-component` | <https://github.com/MatthewFlamm/pytest-homeassistant-custom-component> |
 | Integration Blueprint | <https://github.com/home-assistant/integration_blueprint> |
 
 ---
 
-## 21. Vorgehens‑Checkliste für die Wärmepumpen‑Integration
+## 21. Implementation checklist for the heat-pump integration
 
-1. **Repo aus `integration_blueprint` ableiten**, Domain umbenennen auf `heatpump_xy`.
-2. **API‑Wrapper** (`api.py` oder eigenes PyPI‑Package) implementieren mit `aiohttp` + Custom Exceptions + Dataclasses.
-3. **`manifest.json`** mit `iot_class: local_polling`, `integration_type: device`, `quality_scale: bronze`.
-4. **Config Flow** mit User Step + Validation + Unique ID = Seriennummer; falls Zeroconf/DHCP Discovery möglich, ergänzen.
-5. **`DataUpdateCoordinator`** in `coordinator.py` mit `_async_setup` und `_async_update_data`.
-6. **`entity.py`** mit `HeatpumpEntity(CoordinatorEntity)` Basis.
-7. **Plattformen** (`sensor.py`, `climate.py`, ggf. `number.py`/`select.py`/`switch.py`) via `EntityDescription`‑Pattern. **Keine** Wärmepumpen‑Domänenlogik (z. B. SG‑Ready) – das gehört in Helper‑Entities, die der User selbst orchestriert, oder in spätere Erweiterungen.
-8. **`strings.json` + `translations/en.json` + `translations/de.json`** mit allen Config‑/Entity‑/Exception‑Strings.
-9. **`icons.json`** für sinnvolle Default‑Icons.
-10. **`diagnostics.py`** mit Redaction.
-11. **Reauth Flow** (Silver) und **Reconfigure Flow** (Gold), wenn Bandbreite vorhanden.
-12. **Tests**: `test_config_flow.py` (100 %), `test_coordinator.py`, `test_init.py`, `test_sensor.py` mit Snapshots.
-13. **Hassfest + HACS Action** in `.github/workflows/`.
-14. **`quality_scale.yaml`** mit Status pro Regel (Bronze vollständig `done`).
-15. **Brands** lokal (HA ≥ 2026.3) oder via PR an `home-assistant/brands/custom_integrations/heatpump_xy/`.
-16. **GitHub Release** v0.1.0 erzeugen → HACS kann installieren.
-17. **Optional**: PR an `hacs/default` für Default‑Store‑Listing.
-18. **Langfristig**: PR an `home-assistant/core` mit allen Adaptionen aus §18.
+1. **Derive the repo from `integration_blueprint`**, rename the domain to `heatpump_xy`.
+2. **API wrapper** (`api.py` or its own PyPI package) implemented with `aiohttp` + custom exceptions + dataclasses.
+3. **`manifest.json`** with `iot_class: local_polling`, `integration_type: device`, `quality_scale: bronze`.
+4. **Config flow** with a user step + validation + unique ID = serial number; if Zeroconf/DHCP discovery is possible, add it.
+5. **`DataUpdateCoordinator`** in `coordinator.py` with `_async_setup` and `_async_update_data`.
+6. **`entity.py`** with `HeatpumpEntity(CoordinatorEntity)` base.
+7. **Platforms** (`sensor.py`, `climate.py`, optionally `number.py`/`select.py`/`switch.py`) via the `EntityDescription` pattern. **No** heat-pump domain logic (e.g. SG-Ready) — that belongs in helper entities the user orchestrates themselves, or in later extensions.
+8. **`strings.json` + `translations/en.json` + `translations/de.json`** with all config/entity/exception strings.
+9. **`icons.json`** for sensible default icons.
+10. **`diagnostics.py`** with redaction.
+11. **Reauth flow** (Silver) and **reconfigure flow** (Gold), if there is bandwidth.
+12. **Tests**: `test_config_flow.py` (100%), `test_coordinator.py`, `test_init.py`, `test_sensor.py` with snapshots.
+13. **Hassfest + HACS action** in `.github/workflows/`.
+14. **`quality_scale.yaml`** with status per rule (Bronze fully `done`).
+15. **Brands** locally (HA ≥ 2026.3) or via PR to `home-assistant/brands/custom_integrations/heatpump_xy/`.
+16. **GitHub release** v0.1.0 created → HACS can install.
+17. **Optional**: PR to `hacs/default` for default-store listing.
+18. **Long-term**: PR to `home-assistant/core` with all adaptations from §18.
 
 ---
 
-## 22. Bekannte Unsicherheiten / „neuere Änderungen, prüfen"
+## 22. Known uncertainties / "recent changes, verify"
 
-- **Lokale Brand‑Images** sind erst ab HA 2026.3 möglich; vorher PR an `brands` Repo.
-- **`quality_scale.yaml`** Format kann sich punktuell ändern – im Zweifel an einer aktuellen Bronze‑Integration im Core ausrichten (z. B. `homeassistant/components/peblar/`).
-- **Python 3.13** kam mit HA 2024.12 in HA OS / Container (laut offiziellem Release‑Blog automatisch ausgerollt) und ist seit HA 2025.2 verbindliche Mindestversion für eigenständige Core‑Installationen. Ältere `from __future__` Tricks sind nicht mehr nötig, schaden aber nicht.
-- **`update_before_add`** in `async_add_entities` ist mit Coordinator‑Pattern obsolet – nicht mehr setzen.
-- **HACS 2.x** ist die aktuelle Major‑Linie und benötigt selbst HA Core 2024.4.1+. Das `hacs`‑Feld in `hacs.json` sollte mindestens `2.0.0` sein, nicht mehr die alte 1.34.x. `hacs/action@main` immer auf `main` pinnen lässt CI gegen aktuelle Regeln laufen.
-- **Quality Scale Rules** können sich ändern (laut ADR‑0022 explizit erwartet); bei jedem Major‑Release prüfen. Als Ankerpunkt gilt aktuell die Checklist‑Datei vom 20. Nov 2024 mit 18+10+21+3 Regeln.
+- **Local brand images** are only possible from HA 2026.3 on; before that, PR to the `brands` repo.
+- The **`quality_scale.yaml`** format may change in places — when in doubt, align with a current Bronze integration in Core (e.g. `homeassistant/components/peblar/`).
+- **Python 3.13** came with HA 2024.12 in HA OS / container (automatically rolled out per the official release blog) and has been the binding minimum version for standalone Core installations since HA 2025.2. Old `from __future__` tricks are no longer necessary, but they don't hurt either.
+- **`update_before_add`** in `async_add_entities` is obsolete with the coordinator pattern — don't set it anymore.
+- **HACS 2.x** is the current major line and itself requires HA Core 2024.4.1+. The `hacs` field in `hacs.json` should be at least `2.0.0`, no longer the old 1.34.x. Pinning `hacs/action@main` to `main` lets CI run against the current rules.
+- **Quality scale rules** may change (explicitly expected per ADR-0022); check at every major release. The current anchor is the checklist file dated 20 Nov 2024 with 18+10+21+3 rules.
 
-> Wenn du, Claude Code, an einer Stelle unsicher bist (z. B. exakte aktuelle Pflichtfelder im Manifest, neue Coordinator‑Methoden, Änderung an HACS‑Validation), **fetch die entsprechende Doku‑URL aus §20** statt zu raten oder veraltetes Wissen zu reproduzieren. Better safe than reproducible bug.
+> If you, Claude Code, are unsure about anything (e.g. the exact current required manifest fields, new coordinator methods, changes to HACS validation), **fetch the relevant docs URL from §20** rather than guessing or reproducing outdated knowledge. Better safe than reproducible bug.
