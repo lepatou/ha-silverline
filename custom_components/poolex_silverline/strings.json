@@ -63,7 +63,8 @@
       "already_configured": "This device is already configured.",
       "reauth_successful": "Re-authentication was successful.",
       "reconfigure_successful": "Re-configuration was successful.",
-      "device_id_mismatch": "The supplied device ID does not match the original device."
+      "device_id_mismatch": "The supplied device ID does not match the original device.",
+      "unverified_host": "A LAN broadcast claimed this device is at a new IP, but the new host did not authenticate with the stored local key. The stored host was not changed."
     }
   },
   "entity": {
