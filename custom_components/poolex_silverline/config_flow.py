@@ -17,6 +17,14 @@ from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, DEFAULT_PORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Tuya UDP discovery broadcasts are signed with a publicly known key, so any
+# LAN host can spoof one to redirect us to an attacker-controlled IP. Before
+# rewriting an existing entry's CONF_HOST in response to a broadcast we open
+# a short-lived encrypted session against the new IP with our stored
+# local_key — only a device that holds the real local_key can respond, so a
+# successful get_status proves the new IP is the legitimate device.
+_DISCOVERY_VERIFY_TIMEOUT = 3.0
+
 _USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): cv.string,
@@ -132,26 +140,79 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: Mapping[str, Any]
     ) -> ConfigFlowResult:
         """Triggered by the background UDP listener when a Tuya broadcast
-        names a device we haven't configured yet.
+        names a device on the LAN.
 
         discovery_info carries ``device_id`` and ``ip`` straight from
-        the Tuya broadcast JSON. The local_key is the only thing the
-        device doesn't announce, so we ask the user for that and create
-        the entry.
+        the Tuya broadcast JSON. Two cases:
+
+        * Brand-new device → ask the user for the local_key and create
+          the entry (host + device_id come from the broadcast).
+        * Already-configured device announcing a new IP → satisfies Gold
+          ``discovery-update-info`` by rewriting CONF_HOST in place. But
+          because the Tuya broadcast key is publicly known, we cannot
+          trust the announced IP blindly; we first verify the new host
+          actually answers our stored local_key (see ``_verify_host``).
         """
         device_id = discovery_info["device_id"]
         host = discovery_info["ip"]
         await self.async_set_unique_id(device_id)
-        # Satisfies Gold `discovery-update-info`: a device that's already
-        # configured but now appears at a new IP gets its host rewritten
-        # in place instead of needing a manual reconfigure.
-        self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+
+        existing = self.hass.config_entries.async_entry_for_domain_unique_id(
+            self.handler, device_id
+        )
+        if existing is not None:
+            if existing.data.get(CONF_HOST) == host:
+                # Same IP we already have → nothing to do.
+                return self.async_abort(reason="already_configured")
+            # New IP — only rewrite if a quick encrypted handshake with
+            # our stored local_key succeeds at that IP. This stops a LAN
+            # attacker who minted a spoofed broadcast (the Tuya UDP key
+            # is public) from rerouting our encrypted traffic to them.
+            if not await self._verify_host(host, existing.data):
+                _LOGGER.warning(
+                    "Ignoring discovery for %s at %s: host did not"
+                    " authenticate with the stored local_key",
+                    device_id,
+                    host,
+                )
+                return self.async_abort(reason="unverified_host")
+            self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+
         self._discovery_host = host
         self._discovery_device_id = device_id
         self.context["title_placeholders"] = {
             "name": f"Pool Heatpump ({host})"
         }
         return await self.async_step_discovery_confirm()
+
+    @staticmethod
+    async def _verify_host(host: str, entry_data: Mapping[str, Any]) -> bool:
+        """Attempt a short encrypted handshake against ``host`` using the
+        existing entry's credentials.
+
+        Returns True iff ``connect()`` + ``get_status()`` both succeed
+        within the discovery verify timeout — proof the responder holds
+        our local_key and is therefore the genuine device, not a LAN
+        attacker that minted a spoofed UDP broadcast.
+        """
+        client = SilverlineClient(
+            host=host,
+            port=entry_data.get(CONF_PORT, DEFAULT_PORT),
+            device_id=entry_data[CONF_DEVICE_ID],
+            local_key=entry_data[CONF_LOCAL_KEY],
+            request_timeout=_DISCOVERY_VERIFY_TIMEOUT,
+        )
+        try:
+            await client.connect()
+            await client.get_status()
+        except (CannotConnect, InvalidAuth, ValueError):
+            return False
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error verifying discovered host")
+            return False
+        finally:
+            await client.disconnect()
+        return True
 
     async def async_step_discovery_confirm(
         self, user_input: dict[str, Any] | None = None

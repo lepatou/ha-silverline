@@ -215,6 +215,58 @@ async def test_discovery_updates_host_on_existing_entry(
     assert config_entry.data[CONF_HOST] == new_ip
 
 
+async def test_discovery_rewrites_host_only_on_verified_response(
+    hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
+) -> None:
+    """Existing entry, broadcast announces a new IP, the new IP responds
+    correctly to an encrypted handshake with our stored local_key → the
+    entry's CONF_HOST is rewritten."""
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    config_entry.add_to_hass(hass)
+    assert config_entry.data[CONF_HOST] == HOST
+
+    new_ip = "10.0.0.99"
+    # mock_client_factory's get_status succeeds by default → verification
+    # passes → CONF_HOST is rewritten.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={"device_id": DEVICE_ID, "ip": new_ip, "version": "3.3"},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert config_entry.data[CONF_HOST] == new_ip
+    # The verifier must close the socket it opened.
+    assert mock_client_factory.disconnect.called
+
+
+async def test_discovery_ignores_unverified_host(
+    hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
+) -> None:
+    """Existing entry, broadcast announces a hostile IP that doesn't
+    answer with our local_key → CONF_HOST stays put and the flow aborts
+    with `unverified_host`."""
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    config_entry.add_to_hass(hass)
+    assert config_entry.data[CONF_HOST] == HOST
+
+    hostile_ip = "10.0.0.66"
+    mock_client_factory.get_status.side_effect = CannotConnect("spoof")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={"device_id": DEVICE_ID, "ip": hostile_ip, "version": "3.3"},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "unverified_host"
+    # Crucially, the stored host is unchanged.
+    assert config_entry.data[CONF_HOST] == HOST
+    # Even on failed verification, the verifier must call disconnect().
+    assert mock_client_factory.disconnect.called
+
+
 async def test_discovery_invalid_key_re_prompts(
     hass: HomeAssistant, mock_client_factory
 ) -> None:
