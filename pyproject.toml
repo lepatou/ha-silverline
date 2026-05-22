@@ -29,3 +29,13 @@ exclude_lines = [
   "raise NotImplementedError",
   "if TYPE_CHECKING:",
 ]
+
+[tool.mypy]
+strict = true
+# Match the Python the locally-installed HA was built against — its
+# source uses syntax newer than 3.13 in places, and mypy parses it for
+# type inference. Our integration code stays 3.13-compatible (no 3.14
+# syntax in custom_components/), so CI on 3.13 also parses cleanly.
+python_version = "3.14"
+files = ["custom_components/poolex_silverline"]
+ignore_missing_imports = true

@@ -71,4 +71,4 @@ rules:
   inject-websession:
     status: exempt
     comment: Tuya v3.3 uses raw TCP, not aiohttp; the client owns its socket.
-  strict-typing: todo
+  strict-typing: done

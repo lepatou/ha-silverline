@@ -53,7 +53,7 @@ def _pkcs7_unpad(data: bytes) -> bytes:
     return data[:-pad_len]
 
 
-def _make_cipher(key: bytes) -> Cipher:
+def _make_cipher(key: bytes) -> Cipher[modes.ECB]:
     if len(key) != 16:
         raise ValueError(f"local_key must be 16 bytes, got {len(key)}")
     return Cipher(algorithms.AES(key), modes.ECB())
@@ -195,9 +195,12 @@ class FrameCodec:
         except (ProtocolError, ValueError) as err:
             raise InvalidAuth("decryption failed — local_key likely wrong") from err
         try:
-            return json.loads(plaintext)
+            parsed = json.loads(plaintext)
         except (UnicodeDecodeError, json.JSONDecodeError) as err:
             raise InvalidAuth("decrypted payload is not JSON") from err
+        if not isinstance(parsed, dict):
+            raise InvalidAuth(f"decrypted payload is not a JSON object: {type(parsed).__name__}")
+        return parsed
 
 
 def is_invalid_auth_retcode(retcode: int | None) -> bool:
