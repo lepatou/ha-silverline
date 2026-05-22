@@ -61,9 +61,15 @@ class SilverlineSensorDescription(SensorEntityDescription):
 
 SENSORS: tuple[SilverlineSensorDescription, ...] = (
     SilverlineSensorDescription(
+        # Deliberately no device_class=TEMPERATURE: HA's automatic unit
+        # conversion for that class applies the absolute-temperature
+        # formula F = C * 9/5 + 32 to every value, which is wrong for a
+        # difference (a 5 °C delta should be a 9 °F delta, not 41 °F).
+        # No SensorDeviceClass.TEMPERATURE_DELTA exists in HA today, so
+        # the safest choice is to leave the class off and present the
+        # raw °C number regardless of the user's unit system.
         key="temperature_delta",
         translation_key="temperature_delta",
-        device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         value_fn=lambda d: (

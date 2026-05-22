@@ -845,11 +845,8 @@
       'name': None,
       'object_id_base': 'Temperature delta',
       'options': dict({
-        'sensor': dict({
-          'suggested_display_precision': 1,
-        }),
       }),
-      'original_device_class': <SensorDeviceClass.TEMPERATURE: 'temperature'>,
+      'original_device_class': None,
       'original_icon': None,
       'original_name': 'Temperature delta',
       'platform': 'poolex_silverline',
@@ -1256,7 +1253,6 @@
     }),
     StateSnapshot({
       'attributes': ReadOnlyDict({
-        'device_class': 'temperature',
         'friendly_name': 'Pool Heatpump Temperature delta',
         'state_class': <SensorStateClass.MEASUREMENT: 'measurement'>,
         'unit_of_measurement': <UnitOfTemperature.CELSIUS: '°C'>,

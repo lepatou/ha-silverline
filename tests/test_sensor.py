@@ -109,6 +109,20 @@ async def test_temperature_delta_zero(
     assert state.state == "0"
 
 
+async def test_temperature_delta_has_no_temperature_device_class(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """HA applies the absolute-temperature conversion F = C*9/5 + 32 to
+    every sensor with device_class=TEMPERATURE. For a *delta*, that
+    offset is wrong (5 °C delta should be 9 °F delta, not 41 °F), and
+    HA has no TEMPERATURE_DELTA class today. So the delta sensor must
+    not carry the temperature device_class — verify here so a future
+    edit cannot quietly reintroduce the imperial-units bug."""
+    state = hass.states.get("sensor.pool_heatpump_temperature_delta")
+    assert state is not None
+    assert "device_class" not in state.attributes
+
+
 async def test_temperature_delta_unavailable_when_dp_missing(
     hass: HomeAssistant, mock_client_factory, init_integration
 ) -> None:
