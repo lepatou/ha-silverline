@@ -45,6 +45,27 @@ async def test_setup_triggers_reauth_on_invalid_key(
     assert any(flow["context"].get("source") == "reauth" for flow in flows)
 
 
+async def test_setup_disconnects_client_when_first_refresh_fails(
+    hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
+) -> None:
+    """When the first refresh fails after _async_setup has already
+    opened the TCP socket and started background tasks, async_setup_entry
+    must shut the coordinator down. Otherwise entry.runtime_data is
+    never set, async_unload_entry can't reach the coordinator, and the
+    socket plus the reader / heartbeat / reconnect tasks leak for the
+    rest of the HA process lifetime.
+    """
+    mock_client_factory.get_status = AsyncMock(side_effect=InvalidAuth("bad"))
+    config_entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    # connect() succeeded (it's the default AsyncMock(return_value=None));
+    # get_status() raised, which now triggers explicit coordinator
+    # shutdown — which in turn disconnects the client.
+    assert mock_client_factory.connect.await_count >= 1
+    assert mock_client_factory.disconnect.await_count >= 1
+
+
 async def test_firmware_capability_filter_skips_missing_dps(
     hass: HomeAssistant,
     mock_client_factory,

@@ -89,7 +89,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: SilverlineConfigEntry) -
         local_key=entry.data[CONF_LOCAL_KEY],
     )
     coordinator = SilverlineCoordinator(hass, entry, client)
-    await coordinator.async_config_entry_first_refresh()
+    # _async_setup opens the TCP socket and registers push + connection
+    # listeners; the first refresh that follows can still raise (auth
+    # rejected after a successful connect, for example). Without an
+    # explicit shutdown on that path, the socket and the background
+    # reader/heartbeat/reconnect tasks would survive the failed setup
+    # — entry.runtime_data is never assigned, so async_unload_entry
+    # cannot reach the coordinator to clean it up.
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        await coordinator.async_shutdown()
+        raise
 
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
