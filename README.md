@@ -275,6 +275,21 @@ suffix becomes heat/cool. All seven modes are accessible.
   integration with extensive device YAMLs; the source for several of the
   DP mappings used here.
 
+## Release notes
+
+The Home Assistant integration pins `pysilverline` in `manifest.json`, so
+publish the matching library release to PyPI before tagging an integration
+release:
+
+1. Create a PyPI account, then configure a Trusted Publisher for project
+   `pysilverline`, repository `christianreiss/ha-silverline`, workflow
+   `pysilverline-pypi.yaml` (in `.github/workflows/`), environment `pypi`.
+2. Ensure `pysilverline/pyproject.toml` has the intended version.
+3. Push `pysilverline-vX.Y.Z`; the PyPI workflow builds and publishes that
+   exact version.
+4. Verify `python -m pip index versions pysilverline` lists the version, then
+   tag the Home Assistant integration release.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
