@@ -15,7 +15,11 @@ from .const import DOMAIN
 from .coordinator import SilverlineConfigEntry, SilverlineCoordinator
 from .entity import SilverlineEntity
 
-PARALLEL_UPDATES = 0
+# Write-capable: serialize per entity so chained automation steps don't
+# race a stale optimistic merge into the coordinator. pysilverline's
+# _send_lock already serializes the underlying socket writes, so this
+# is belt-and-braces — and brings switch in line with climate/select.
+PARALLEL_UPDATES = 1
 
 
 @dataclass(frozen=True, kw_only=True)

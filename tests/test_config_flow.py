@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE, SOURCE_USER
+from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -15,7 +15,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.poolex_silverline.const import (
     CONF_DEVICE_ID,
     CONF_LOCAL_KEY,
-    DEFAULT_PORT,
     DOMAIN,
 )
 
@@ -90,6 +89,10 @@ async def test_reauth_flow_happy_path(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert config_entry.data[CONF_LOCAL_KEY] == "fedcba9876543210"
+    # async_update_reload_and_abort schedules the reload as a background
+    # task; without draining here the new coordinator's refresh timer
+    # outlives the test and trips the lingering-timer cleanup check.
+    await hass.async_block_till_done()
 
 
 async def test_reauth_flow_rejects_bad_key(
@@ -122,6 +125,9 @@ async def test_reconfigure_flow_happy_path(
     assert result["reason"] == "reconfigure_successful"
     assert config_entry.data[CONF_HOST] == "10.0.0.99"
     assert config_entry.data[CONF_PORT] == 6669
+    # Drain the reload triggered by async_update_reload_and_abort so the
+    # new coordinator's refresh timer is cancelled before teardown.
+    await hass.async_block_till_done()
 
 
 async def test_reconfigure_flow_rejects_device_id_change(
@@ -264,6 +270,62 @@ async def test_discovery_ignores_unverified_host(
     # Crucially, the stored host is unchanged.
     assert config_entry.data[CONF_HOST] == HOST
     # Even on failed verification, the verifier must call disconnect().
+    assert mock_client_factory.disconnect.called
+
+
+async def test_discovery_same_ip_aborts_without_verify(
+    hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
+) -> None:
+    """A discovery broadcast for an already-configured device at its
+    existing IP short-circuits to already_configured without opening a
+    verification socket."""
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    config_entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={"device_id": DEVICE_ID, "ip": HOST, "version": "3.3"},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    # Short-circuit before _verify_host — connect must not be called.
+    assert not mock_client_factory.connect.called
+
+
+async def test_discovery_step_delegates_to_integration_discovery(
+    hass: HomeAssistant, mock_client_factory
+) -> None:
+    """async_step_discovery is the hassfest-recognised alias that
+    forwards to async_step_integration_discovery."""
+    from homeassistant.config_entries import SOURCE_DISCOVERY
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_DISCOVERY},
+        data={"device_id": DEVICE_ID, "ip": HOST, "version": "3.3"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+
+
+async def test_verify_host_swallows_unexpected_exception(
+    hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
+) -> None:
+    """An unexpected exception inside _verify_host is treated as
+    verification failure, not propagated."""
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    config_entry.add_to_hass(hass)
+    mock_client_factory.get_status.side_effect = RuntimeError("kaboom")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={"device_id": DEVICE_ID, "ip": "10.0.0.77", "version": "3.3"},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "unverified_host"
+    assert config_entry.data[CONF_HOST] == HOST
     assert mock_client_factory.disconnect.called
 
 

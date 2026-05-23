@@ -194,6 +194,10 @@ class SilverlineClient:
         )
         if is_invalid_auth_retcode(retcode):
             raise InvalidAuth(f"DP_QUERY rejected retcode={retcode}")
+        # Mirror set_multiple: any other non-zero retcode is a device-side
+        # failure we shouldn't paper over by decrypting an empty body.
+        if retcode not in (None, 0):
+            raise SilverlineError(f"DP_QUERY failed retcode=0x{retcode:08x}")
         decoded = self._codec.decrypt_body(ciphertext)
         dps = decoded.get("dps", {}) if isinstance(decoded, dict) else {}
         if not isinstance(dps, dict):
@@ -346,7 +350,15 @@ class SilverlineClient:
             self._on_connection_dropped()
 
     def _dispatch(self, frame: Frame) -> None:
-        if frame.seq in self._pending:
+        # Match request echoes by both seq AND cmd. Push frames (CMD_STATUS)
+        # carry their own seqs from the device and could theoretically collide
+        # with one of our outstanding request seqs; gating on cmd guarantees
+        # a push payload is never delivered to a request future that can't
+        # decode it.
+        if (
+            frame.cmd in (const.CMD_CONTROL, const.CMD_DP_QUERY, const.CMD_DP_REFRESH)
+            and frame.seq in self._pending
+        ):
             fut = self._pending.pop(frame.seq)
             if not fut.done():
                 fut.set_result(frame)
@@ -356,7 +368,11 @@ class SilverlineClient:
             ciphertext = self._codec.split_request_payload(frame.payload)
             try:
                 decoded = self._codec.decrypt_body(ciphertext)
-            except InvalidAuth:
+            except (InvalidAuth, ProtocolError):
+                # InvalidAuth = wrong key (next poll will trigger reauth).
+                # ProtocolError = AES decrypted but JSON parse failed —
+                # transient corruption; ignore the push, the next one
+                # will land cleanly.
                 _LOGGER.debug("ignoring undecryptable push frame")
                 return
             dps = decoded.get("dps", {}) if isinstance(decoded, dict) else {}

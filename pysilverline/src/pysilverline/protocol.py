@@ -178,7 +178,10 @@ class FrameCodec:
             if len(body) >= 4:
                 retcode = struct.unpack(">I", body[:4])[0]
                 body = body[4:]
-        if body.startswith(const.PROTOCOL_VERSION):
+        # Match the full 15-byte v3.3 header, not just its 3-byte ASCII
+        # prefix — at ~1/16M frames a random AES ciphertext would otherwise
+        # begin with 33 2e 33 and we'd peel 15 bytes off real payload.
+        if body.startswith(const.PROTOCOL_33_HEADER):
             body = body[len(const.PROTOCOL_33_HEADER):]
         return retcode, body
 
@@ -191,17 +194,24 @@ class FrameCodec:
         the Tuya protocol notes describe pushes as headerless. We peel
         either shape so push DPs decrypt correctly.
         """
-        if payload.startswith(const.PROTOCOL_VERSION):
+        # Use the full 15-byte v3.3 header; the bare 3-byte ASCII prefix
+        # is a 1/16M collision target on encrypted bytes.
+        if payload.startswith(const.PROTOCOL_33_HEADER):
             return payload[len(const.PROTOCOL_33_HEADER):]
-        if len(payload) >= 4 and payload[4:].startswith(const.PROTOCOL_VERSION):
+        if len(payload) >= 4 and payload[4:].startswith(const.PROTOCOL_33_HEADER):
             return payload[4 + len(const.PROTOCOL_33_HEADER):]
         return payload
 
     def decrypt_body(self, body: bytes) -> dict[str, Any]:
         """Decrypt a payload body and parse it as JSON.
 
-        Empty bodies return an empty dict; a non-JSON or auth-rejected
-        ciphertext raises InvalidAuth so the caller can trigger a reauth flow.
+        Empty bodies return an empty dict. A failure to decrypt with our
+        key raises ``InvalidAuth`` (signals reauth at the user). A
+        successful decrypt followed by garbled output (non-UTF8 / non-JSON
+        / non-object) raises ``ProtocolError`` instead — the key is fine,
+        a frame just got corrupted on the wire, and triggering a reauth
+        flow over transient corruption would punish the user for a single
+        bit-flip.
         """
 
         if not body:
@@ -213,9 +223,11 @@ class FrameCodec:
         try:
             parsed = json.loads(plaintext)
         except (UnicodeDecodeError, json.JSONDecodeError) as err:
-            raise InvalidAuth("decrypted payload is not JSON") from err
+            raise ProtocolError("decrypted payload is not JSON") from err
         if not isinstance(parsed, dict):
-            raise InvalidAuth(f"decrypted payload is not a JSON object: {type(parsed).__name__}")
+            raise ProtocolError(
+                f"decrypted payload is not a JSON object: {type(parsed).__name__}"
+            )
         return parsed
 
 

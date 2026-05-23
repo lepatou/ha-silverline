@@ -271,3 +271,102 @@ async def test_preset_while_off_is_noop(
         blocking=True,
     )
     mock_client_factory.set_multiple.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _write error handling: InvalidAuth and CannotConnect translation
+# ---------------------------------------------------------------------------
+
+
+async def test_operating_mode_write_invalid_auth_surfaces(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    """A rejected write on the operating_mode select surfaces as a
+    translated HomeAssistantError with the auth_failed key."""
+    from homeassistant.exceptions import HomeAssistantError
+    from pysilverline import InvalidAuth
+
+    mock_client_factory.set_multiple.side_effect = InvalidAuth("rotated")
+    with pytest.raises(HomeAssistantError) as exc:
+        await hass.services.async_call(
+            SELECT_DOMAIN,
+            SERVICE_SELECT_OPTION,
+            {ATTR_ENTITY_ID: OPMODE_ENTITY, ATTR_OPTION: "cool"},
+            blocking=True,
+        )
+    assert exc.value.translation_key == "auth_failed"
+
+
+async def test_operating_mode_write_cannot_connect_surfaces(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    """A network drop during an operating_mode write surfaces as
+    HomeAssistantError with the set_failed translation."""
+    from homeassistant.exceptions import HomeAssistantError
+    from pysilverline import CannotConnect
+
+    mock_client_factory.set_multiple.side_effect = CannotConnect("offline")
+    with pytest.raises(HomeAssistantError) as exc:
+        await hass.services.async_call(
+            SELECT_DOMAIN,
+            SERVICE_SELECT_OPTION,
+            {ATTR_ENTITY_ID: OPMODE_ENTITY, ATTR_OPTION: "heat"},
+            blocking=True,
+        )
+    assert exc.value.translation_key == "set_failed"
+
+
+# ---------------------------------------------------------------------------
+# Defensive raises that HA's service layer normally filters out before
+# the entity sees them — exercised by direct method calls so the entity's
+# own invariants (not just HA's framework) are covered.
+# ---------------------------------------------------------------------------
+
+
+def _preset_entity(hass: HomeAssistant):
+    component = hass.data["select"]
+    return next(e for e in component.entities if e.entity_id == PRESET_ENTITY)
+
+
+def _opmode_entity(hass: HomeAssistant):
+    component = hass.data["select"]
+    return next(e for e in component.entities if e.entity_id == OPMODE_ENTITY)
+
+
+async def test_preset_select_rejects_unknown_option_directly(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """HA's framework normally rejects options not in `_attr_options`,
+    but the entity must also enforce this on its own — a programmatic
+    or buggy framework path must not silently send junk to the device."""
+    entity = _preset_entity(hass)
+    with pytest.raises(ServiceValidationError):
+        await entity.async_select_option("bogus")
+
+
+async def test_preset_select_unknown_dp4_string_is_noop(
+    hass: HomeAssistant, mock_client_factory, init_integration
+) -> None:
+    """When DP 4 carries a string the integration doesn't recognise as
+    Heat-prefix or Cool-prefix (and isn't "Auto"), picking a preset must
+    fall through silently rather than guess a direction — guessing could
+    flip the unit between heating and cooling unexpectedly."""
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Mystery"})
+    )
+    await hass.async_block_till_done()
+    mock_client_factory.set_multiple.reset_mock()
+    entity = _preset_entity(hass)
+    await entity.async_select_option("boost")
+    mock_client_factory.set_multiple.assert_not_called()
+
+
+async def test_operating_mode_select_rejects_unknown_option_directly(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Direct call path: the operating_mode select must raise on a
+    value not in OPMODE_OPTIONS rather than fall through to _write."""
+    entity = _opmode_entity(hass)
+    with pytest.raises(ServiceValidationError):
+        await entity.async_select_option("invalid")

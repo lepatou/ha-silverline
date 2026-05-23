@@ -23,6 +23,80 @@ async def test_setup_and_unload(
     assert init_integration.state is ConfigEntryState.NOT_LOADED
 
 
+async def test_async_setup_is_reentrant(hass: HomeAssistant) -> None:
+    """async_setup short-circuits if it has already spawned the discovery
+    task — important because HA can call it multiple times (e.g. during
+    integration reloads) and we must not double-spawn the UDP listener."""
+    from custom_components.poolex_silverline import async_setup
+    from custom_components.poolex_silverline.const import DOMAIN
+
+    assert await async_setup(hass, {})
+    first_task = hass.data[DOMAIN]["_discovery_task"]
+    assert await async_setup(hass, {})
+    assert hass.data[DOMAIN]["_discovery_task"] is first_task
+
+    first_task.cancel()
+    try:
+        await first_task
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+
+
+async def test_reload_on_entry_data_change(
+    hass: HomeAssistant, mock_client_factory, init_integration: MockConfigEntry
+) -> None:
+    """The update listener wired in async_setup_entry must call
+    async_reload when entry data changes — that path covers the
+    discovery-driven host-rewrite scenario as well as user-initiated
+    reconfigure."""
+    coordinator_before = init_integration.runtime_data
+    hass.config_entries.async_update_entry(
+        init_integration, data={**init_integration.data, "host": "10.0.0.123"}
+    )
+    await hass.async_block_till_done()
+    # async_reload tears down and rebuilds — the new coordinator is a
+    # different instance bound to the new entry data.
+    assert init_integration.state is ConfigEntryState.LOADED
+    assert init_integration.runtime_data is not coordinator_before
+
+
+async def test_discovery_loop_logs_unexpected_exception(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bug in pysilverline.discover() that escapes as a generic
+    Exception must be logged (not swallowed silently) so operators can
+    diagnose a stuck-discovery condition rather than wondering why
+    devices stop being auto-detected."""
+    import logging
+    from custom_components.poolex_silverline import async_setup
+    from custom_components.poolex_silverline.const import DOMAIN
+
+    async def _broken_discover():
+        raise RuntimeError("simulated discover() blowup")
+        yield  # unreachable — generator contract
+
+    monkeypatch.setattr(
+        "custom_components.poolex_silverline.discover", _broken_discover
+    )
+    caplog.set_level(
+        logging.ERROR, logger="custom_components.poolex_silverline"
+    )
+    assert await async_setup(hass, {})
+    # Give the just-spawned task a chance to run its body and hit the
+    # exception handler before we inspect logs.
+    for _ in range(3):
+        await asyncio.sleep(0)
+    await hass.async_block_till_done()
+    assert any(
+        "discovery listener crashed" in r.getMessage()
+        for r in caplog.records
+    )
+    task = hass.data[DOMAIN]["_discovery_task"]
+    assert task.done()
+
+
 async def test_setup_retry_on_connect_failure(
     hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
 ) -> None:

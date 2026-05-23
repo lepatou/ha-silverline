@@ -115,7 +115,6 @@ async def test_repair_issue_fires_on_push(
 ) -> None:
     """Fault reconcile runs on push-frame state updates too, not just
     on coordinator polls — important because push is the fast path."""
-    coordinator = init_integration.runtime_data
     # The mock's push listeners list is in mock_client_factory.listeners;
     # the coordinator registered itself in async_setup. Invoke directly.
     push_listener = mock_client_factory.listeners[0]
@@ -153,7 +152,6 @@ async def test_repair_issue_clears_on_poll(
     """The mirror case: a fault that clears while we're only polling
     (no pushes arriving) must drop the open Repair issue, not leave it
     stranded until the next push."""
-    coordinator = init_integration.runtime_data
     # Seed an active issue via the push path (mirrors a real boot with
     # a fault bit set).
     push_listener = mock_client_factory.listeners[0]

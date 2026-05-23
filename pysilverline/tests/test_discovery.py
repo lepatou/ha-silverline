@@ -13,8 +13,6 @@ import struct
 from typing import Any
 from unittest.mock import patch
 
-import pytest
-
 from pysilverline import const
 from pysilverline.discovery import (
     UDP_DISCOVERY_KEY,

@@ -5,25 +5,19 @@ rules:
     comment: Integration registers no custom service actions in v0.1.
   appropriate-polling: done
   brands:
-    status: done
+    status: todo
     comment: |
-      Local brand assets in custom_components/poolex_silverline/brand/ are
-      served by HA >= 2026.3 (brands-proxy API). For older HA installs the
-      assets are visible only after a PR to home-assistant/brands/custom_integrations/poolex_silverline/
-      lands; not currently submitted.
+      Brand assets (icon.png, icon@2x.png, logo.png, logo@2x.png) are
+      prepared locally in custom_components/poolex_silverline/brand/ at
+      the required 256x256 / 512x512 / 512x256 / 1024x512 resolutions,
+      but a PR to home-assistant/brands/custom_integrations/poolex_silverline/
+      has not yet been submitted. Until that PR lands the integration's
+      icon/logo will not display in the HA UI for users on stable HA
+      releases.
   common-modules: done
   config-flow: done
   config-flow-test-coverage: done
-  dependency-transparency:
-    status: done
-    comment: |
-      The only runtime dependency is pysilverline, declared explicitly in
-      manifest.json:requirements. Release blocker tracked separately: the
-      pinned version must be published to PyPI before a Platinum release
-      goes out, otherwise HA's startup-time `pip install` of the
-      manifest requirements will fail for HACS users. The package source
-      lives in ./pysilverline and is wheel-buildable; publishing it is
-      a CI/release-workflow task rather than a code change.
+  dependency-transparency: done
   docs-actions:
     status: exempt
     comment: Integration registers no custom service actions in v0.1.

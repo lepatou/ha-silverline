@@ -20,6 +20,7 @@ from pysilverline import (
     DeviceState,
     InvalidAuth,
     SilverlineClient,
+    SilverlineError,
     const as tuya_const,
 )
 
@@ -103,6 +104,12 @@ class SilverlineCoordinator(DataUpdateCoordinator[DeviceState]):
             raise ConfigEntryAuthFailed(err) from err
         except CannotConnect as err:
             raise UpdateFailed(f"poll failed: {err}") from err
+        except SilverlineError as err:
+            # Device-side rejection (non-zero retcode that isn't auth). The
+            # socket is healthy; the firmware refused the query for some
+            # other reason — surface as UpdateFailed so HA keeps the entry
+            # loaded and retries on the next tick.
+            raise UpdateFailed(f"poll rejected: {err}") from err
         # Snapshot the DPs the firmware actually emits, once. Platforms
         # read this in their async_setup_entry to skip entities that would
         # otherwise spend their whole lifetime `unavailable`.
@@ -213,7 +220,15 @@ class SilverlineCoordinator(DataUpdateCoordinator[DeviceState]):
         # state caught between the drop and the next 30s poll lands fast.
         if connected:
             _LOGGER.info("connection to %s restored", self.client.host)
-            self.hass.async_create_task(self.async_request_refresh())
+            # Bind to the config entry so the refresh is cancelled on unload —
+            # without this, a recovery callback that fires between unload and
+            # platform teardown would run async_request_refresh against a
+            # half-torn-down coordinator.
+            self.config_entry.async_create_task(
+                self.hass,
+                self.async_request_refresh(),
+                name=f"{DOMAIN}_refresh_on_reconnect",
+            )
         else:
             _LOGGER.warning(
                 "connection to %s lost; entities will go unavailable",

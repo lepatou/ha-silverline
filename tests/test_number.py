@@ -196,3 +196,61 @@ async def test_unavailable_when_temp_set_none(
     state = hass.states.get(ENTITY_ID)
     assert state is not None
     assert state.state == STATE_UNAVAILABLE
+
+
+async def test_native_value_returns_none_when_coordinator_data_none(
+    hass: HomeAssistant, mock_client_factory, init_integration: MockConfigEntry
+) -> None:
+    """Direct property read when coordinator.data is None must return
+    None rather than crashing — covers the early-return guard before a
+    real first push has landed."""
+    from homeassistant.helpers.entity_component import EntityComponent
+
+    coordinator = init_integration.runtime_data
+    coordinator.data = None
+    component: EntityComponent = hass.data["number"]
+    entity = next(
+        e for e in component.entities if e.entity_id == ENTITY_ID
+    )
+    assert entity.native_value is None
+
+
+async def test_set_value_surfaces_invalid_auth_as_homeassistant_error(
+    hass: HomeAssistant, mock_client_factory, init_integration: MockConfigEntry
+) -> None:
+    """When the device rejects the write because the key rotated, the
+    number entity must surface HomeAssistantError with the auth_failed
+    translation key — matches what climate/switch do."""
+    from homeassistant.exceptions import HomeAssistantError
+    from pysilverline import InvalidAuth
+    import pytest
+
+    mock_client_factory.set_dp.side_effect = InvalidAuth("rotated")
+    with pytest.raises(HomeAssistantError) as exc:
+        await hass.services.async_call(
+            NUMBER_DOMAIN,
+            SERVICE_SET_VALUE,
+            {ATTR_ENTITY_ID: ENTITY_ID, ATTR_VALUE: 26},
+            blocking=True,
+        )
+    assert exc.value.translation_key == "auth_failed"
+
+
+async def test_set_value_surfaces_cannot_connect_as_homeassistant_error(
+    hass: HomeAssistant, mock_client_factory, init_integration: MockConfigEntry
+) -> None:
+    """A network drop during a slider write becomes a translated
+    HomeAssistantError, not a 500 from the service layer."""
+    from homeassistant.exceptions import HomeAssistantError
+    from pysilverline import CannotConnect
+    import pytest
+
+    mock_client_factory.set_dp.side_effect = CannotConnect("network down")
+    with pytest.raises(HomeAssistantError) as exc:
+        await hass.services.async_call(
+            NUMBER_DOMAIN,
+            SERVICE_SET_VALUE,
+            {ATTR_ENTITY_ID: ENTITY_ID, ATTR_VALUE: 26},
+            blocking=True,
+        )
+    assert exc.value.translation_key == "set_failed"

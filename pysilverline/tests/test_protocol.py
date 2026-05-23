@@ -212,6 +212,42 @@ def test_decrypt_body_empty_returns_empty_dict() -> None:
     assert codec.decrypt_body(b"") == {}
 
 
+def test_decrypt_body_post_aes_corruption_is_protocol_error_not_invalid_auth() -> None:
+    """AES decrypts cleanly with our key but the plaintext is not JSON →
+    ProtocolError. Distinguishes a one-shot wire-corruption event (the
+    next frame will land fine) from a permanently-wrong local_key, so
+    the caller doesn't trigger a needless reauth flow."""
+    codec = FrameCodec(KEY)
+    ct = aes_encrypt(b"not json at all", KEY.encode())
+    with pytest.raises(ProtocolError):
+        codec.decrypt_body(ct)
+
+
+def test_decrypt_body_non_object_json_is_protocol_error() -> None:
+    """Valid JSON but not a JSON object (e.g. an array or scalar) is the
+    same wire-corruption shape — ProtocolError, not InvalidAuth."""
+    codec = FrameCodec(KEY)
+    ct = aes_encrypt(b"[1,2,3]", KEY.encode())
+    with pytest.raises(ProtocolError):
+        codec.decrypt_body(ct)
+
+
+def test_split_response_payload_does_not_strip_three_byte_coincidence() -> None:
+    """split_response_payload must require the full 15-byte v3.3 header
+    before peeling it off — peeling on just the 3-byte ASCII prefix
+    "3.3" would silently truncate a random AES ciphertext that happened
+    to begin with those bytes (1 in ~16M)."""
+    codec = FrameCodec(KEY)
+    # Build a body shaped like a response payload: 4-byte retcode + bytes
+    # that start with b"3.3" but are NOT a v3.3 header (next 12 bytes are
+    # not zeros, so this is plain ciphertext that just begins with "3.3").
+    fake_ciphertext = b"3.3" + bytes(range(0x10, 0x1D))  # 16 bytes total
+    payload = b"\x00\x00\x00\x00" + fake_ciphertext
+    retcode, body = codec.split_response_payload(const.CMD_DP_QUERY, payload)
+    assert retcode == 0
+    assert body == fake_ciphertext  # NOT truncated
+
+
 def test_decode_rejects_oversize_size_field() -> None:
     """A header claiming a multi-GiB frame must be rejected immediately
     instead of waiting for the bytes to arrive — protects against a
