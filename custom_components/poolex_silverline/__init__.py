@@ -8,6 +8,7 @@ import logging
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from pysilverline import SilverlineClient, discover
@@ -16,6 +17,8 @@ from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, DOMAIN
 from .coordinator import SilverlineConfigEntry, SilverlineCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,

@@ -27,7 +27,11 @@ from .entity import SilverlineEntity
 
 PARALLEL_UPDATES = 0
 
-_FAULT_OPTIONS: list[str] = ["none", *tuya_const.FAULT_BIT_NAMES.values(), "unknown"]
+_FAULT_OPTIONS: list[str] = [
+    "none",
+    *(name.lower() for name in tuya_const.FAULT_BIT_NAMES.values()),
+    "unknown",
+]
 
 
 def _decode_fault(raw: int | None) -> str | None:
@@ -37,7 +41,7 @@ def _decode_fault(raw: int | None) -> str | None:
         return "none"
     for bit, name in tuya_const.FAULT_BIT_NAMES.items():
         if raw & (1 << bit):
-            return name
+            return name.lower()
     return "unknown"
 
 

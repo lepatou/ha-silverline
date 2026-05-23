@@ -41,11 +41,11 @@ async def test_fault_code_decoded_to_enum_state(
 
     coordinator.async_set_updated_data(DeviceState.from_dps({"13": 1}))
     await hass.async_block_till_done()
-    assert hass.states.get("sensor.pool_heatpump_fault_code").state == "E03"
+    assert hass.states.get("sensor.pool_heatpump_fault_code").state == "e03"
 
     coordinator.async_set_updated_data(DeviceState.from_dps({"13": 2}))
     await hass.async_block_till_done()
-    assert hass.states.get("sensor.pool_heatpump_fault_code").state == "E04"
+    assert hass.states.get("sensor.pool_heatpump_fault_code").state == "e04"
 
     coordinator.async_set_updated_data(DeviceState.from_dps({"13": 1 << 25}))
     await hass.async_block_till_done()
