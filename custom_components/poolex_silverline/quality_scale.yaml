@@ -3,7 +3,13 @@ rules:
   action-setup:
     status: exempt
     comment: Integration registers no custom service actions in v0.1.
-  appropriate-polling: done
+  appropriate-polling:
+    status: exempt
+    comment: |
+      iot_class is local_push: the coordinator holds a persistent TCP
+      socket and processes spontaneous CMD_STATUS pushes via
+      async_set_updated_data. The 30 s DataUpdateCoordinator poll is a
+      heartbeat/fallback rather than the primary state path.
   brands:
     status: todo
     comment: |

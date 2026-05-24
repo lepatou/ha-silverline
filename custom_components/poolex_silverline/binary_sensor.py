@@ -32,12 +32,10 @@ def _bit(state: DeviceState, position: int) -> bool | None:
 def _compressor_active(state: DeviceState) -> bool | None:
     """True iff the heat pump is actively heating or cooling right now.
 
-    We share the hvac_action computation with the climate entity so the
+    Shares compute_hvac_action with the climate entity so the
     "Compressor" binary sensor flips in lockstep with the climate card.
-    `last_direction` is irrelevant here — it only matters for OFF→mode
-    mapping, which always reports OFF (i.e. False) regardless.
     """
-    action = compute_hvac_action(state, None)
+    action = compute_hvac_action(state)
     if action is None:
         return None
     return action in (HVACAction.HEATING, HVACAction.COOLING)

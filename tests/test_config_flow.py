@@ -329,6 +329,100 @@ async def test_verify_host_swallows_unexpected_exception(
     assert mock_client_factory.disconnect.called
 
 
+async def test_discovery_logs_known_product_key(
+    hass: HomeAssistant,
+    mock_client_factory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broadcast carrying a confirmed Poolex productKey should produce
+    a discovery flow AND an INFO log line marking it as known. The
+    permissive filter does not abort — that's the user-chosen behavior
+    until more productKeys are captured."""
+    import logging
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    caplog.set_level(
+        logging.INFO, logger="custom_components.poolex_silverline.config_flow"
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={
+            "device_id": DEVICE_ID,
+            "ip": HOST,
+            "version": "3.3",
+            "product_key": "3bhylhz5zhogklel",
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "discovery_confirm"
+    assert any(
+        "productKey=3bhylhz5zhogklel" in r.getMessage() and "known=True" in r.getMessage()
+        for r in caplog.records
+    ), f"expected known-productKey INFO log; got {[r.getMessage() for r in caplog.records]}"
+
+
+async def test_discovery_aborts_on_unknown_product_key(
+    hass: HomeAssistant,
+    mock_client_factory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unknown productKey (e.g. a Tuya smart bulb / plug / camera
+    that broadcasts on the same discovery port) must abort the flow with
+    `unsupported_product` so no spurious "Pool Heatpump" discovery card
+    appears for it. The check fires before async_set_unique_id, so the
+    bogus device_id never lands in the flow context either."""
+    import logging
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    caplog.set_level(
+        logging.INFO, logger="custom_components.poolex_silverline.config_flow"
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={
+            "device_id": DEVICE_ID,
+            "ip": HOST,
+            "version": "3.3",
+            "product_key": "tuyabulbkeyXXXXX",
+        },
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "unsupported_product"
+    assert any(
+        "productKey=tuyabulbkeyXXXXX" in r.getMessage()
+        and "ignoring non-Poolex" in r.getMessage()
+        for r in caplog.records
+    ), f"expected non-Poolex INFO log; got {[r.getMessage() for r in caplog.records]}"
+
+
+async def test_discovery_logs_missing_product_key_as_known_false(
+    hass: HomeAssistant,
+    mock_client_factory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Discovery payload without a productKey (e.g. older Tuya firmware
+    that doesn't include it in the broadcast JSON) logs known=False and
+    continues with the flow."""
+    import logging
+    from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
+
+    caplog.set_level(
+        logging.INFO, logger="custom_components.poolex_silverline.config_flow"
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_INTEGRATION_DISCOVERY},
+        data={"device_id": DEVICE_ID, "ip": HOST, "version": "3.3"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert any(
+        "productKey=None" in r.getMessage() and "known=False" in r.getMessage()
+        for r in caplog.records
+    ), f"expected None-productKey INFO log; got {[r.getMessage() for r in caplog.records]}"
+
+
 async def test_discovery_invalid_key_re_prompts(
     hass: HomeAssistant, mock_client_factory
 ) -> None:

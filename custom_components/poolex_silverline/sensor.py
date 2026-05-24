@@ -203,7 +203,7 @@ SENSORS: tuple[SilverlineSensorDescription, ...] = (
         # value_fn is unused — coord_fn takes precedence — but the
         # dataclass requires it, so provide a None-returning stub.
         value_fn=lambda d: None,
-        coord_fn=lambda c: c._runtime_today_seconds,
+        coord_fn=lambda c: c.runtime_today_seconds,
         # DPs 1 + 4 are what compute_hvac_action depends on to decide
         # HEATING/COOLING vs IDLE/OFF. Gating on these matches the
         # climate entity's minimum-firmware contract.

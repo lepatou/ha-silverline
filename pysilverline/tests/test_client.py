@@ -638,6 +638,179 @@ async def test_back_to_back_drops_keep_triggering_reconnects(
         await server.wait_closed()
 
 
+async def test_reconnect_survives_protocol_error_in_post_reconnect_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The post-reconnect get_status() call inside _reconnect_loop can
+    raise SilverlineError subclasses other than CannotConnect/InvalidAuth
+    — e.g. ProtocolError from a malformed dps payload, or a bare
+    SilverlineError from a non-zero retcode. Before the catch was widened
+    to ``except SilverlineError``, those would escape the loop, leave the
+    reconnect task dead, and the client would never come back. This test
+    drops the original connection, then on the second connection the
+    server replies to DP_QUERY with a malformed dps shape — the client
+    must catch it, mark the connection healthy if it still is, and not
+    raise an unhandled task exception.
+    """
+    import pysilverline.client as client_mod
+    monkeypatch.setattr(client_mod, "_RECONNECT_BACKOFF", (0.02, 0.02, 0.02))
+
+    connection_count = 0
+    second_query_done = asyncio.Event()
+
+    def _bad_dps_response(seq: int) -> bytes:
+        # dps is a string instead of a dict → ProtocolError in get_status.
+        return _build_frame(
+            seq, const.CMD_DP_QUERY, {"dps": "not-a-dict"}
+        )
+
+    async def handler(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        nonlocal connection_count
+        connection_count += 1
+        from pysilverline.protocol import FrameCodec
+
+        codec = FrameCodec(KEY)
+        buf = bytearray()
+        try:
+            while True:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    return
+                buf.extend(chunk)
+                while len(buf) >= 24:
+                    try:
+                        frame, remainder = codec.decode(bytes(buf))
+                    except Exception:
+                        return
+                    buf = bytearray(remainder)
+                    if frame.cmd == const.CMD_DP_QUERY:
+                        if connection_count == 1:
+                            # First connection: serve a normal response,
+                            # then drop the socket so the reconnect loop
+                            # has to take over.
+                            writer.write(
+                                _build_frame(
+                                    frame.seq,
+                                    const.CMD_DP_QUERY,
+                                    {"dps": {"1": True, "4": "Heat", "3": 26}},
+                                )
+                            )
+                            await writer.drain()
+                            return  # peer-close → triggers reconnect
+                        else:
+                            # Second connection: respond with malformed
+                            # dps. This is what would have killed the
+                            # reconnect task before the SilverlineError
+                            # catch.
+                            writer.write(_bad_dps_response(frame.seq))
+                            await writer.drain()
+                            second_query_done.set()
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except OSError:
+                pass
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        client = SilverlineClient(
+            host="127.0.0.1", port=port,
+            device_id=DEVICE_ID, local_key=KEY,
+            request_timeout=1.0,
+        )
+        await client.connect()
+        try:
+            await client.get_status()
+            # Wait for the malformed second-connection DP_QUERY to be
+            # served. If the reconnect task died on the unhandled
+            # ProtocolError, second_query_done never fires.
+            await asyncio.wait_for(second_query_done.wait(), timeout=2.0)
+            # Give the reconnect task a moment to finalise — the key
+            # property is that it doesn't crash with an unhandled
+            # exception; the task should exit cleanly (either by
+            # falling through to the next backoff iteration or by
+            # returning because connect succeeded).
+            for _ in range(20):
+                rt = client._reconnect_task
+                if rt is None or rt.done():
+                    break
+                await asyncio.sleep(0.05)
+            # If the task is done, it must not have raised an exception
+            # other than the expected CancelledError on shutdown.
+            rt = client._reconnect_task
+            if rt is not None and rt.done():
+                exc = rt.exception()
+                assert exc is None, (
+                    f"_reconnect_loop crashed with unhandled exception: {exc!r}"
+                )
+        finally:
+            await client.disconnect()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_disconnect_propagates_outer_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If disconnect() is itself cancelled while awaiting an inner task,
+    the CancelledError must propagate — the previous
+    ``except (CancelledError, Exception)`` swallowed it and made
+    disconnect() effectively non-cancellable. A coroutine that cannot be
+    cancelled is a footgun for whoever owns disconnect()'s task tree
+    (HA's config-entry unload, in our case).
+    """
+    import pysilverline.client as client_mod
+
+    # Long backoff so the reconnect task is definitely still running
+    # when we cancel disconnect().
+    monkeypatch.setattr(client_mod, "_RECONNECT_BACKOFF", (60.0,))
+
+    async def drop_immediately(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+
+    server = await asyncio.start_server(drop_immediately, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        client = SilverlineClient(
+            host="127.0.0.1", port=port,
+            device_id=DEVICE_ID, local_key=KEY,
+            request_timeout=0.5,
+        )
+        await client.connect()
+        # Wait for the reconnect task to be scheduled and to be sleeping
+        # on its 60s backoff — that's the await point we want to land
+        # disconnect() on.
+        for _ in range(40):
+            if client._reconnect_task is not None and not client._reconnect_task.done():
+                break
+            await asyncio.sleep(0.025)
+        assert client._reconnect_task is not None
+
+        # Run disconnect() inside a task we can cancel from the outside,
+        # then assert the cancellation propagates as CancelledError.
+        disconnect_task = asyncio.create_task(client.disconnect())
+        # Yield so disconnect() reaches its `await asyncio.gather(...)`.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        disconnect_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await disconnect_task
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 async def test_disconnect_cancels_reconnect_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

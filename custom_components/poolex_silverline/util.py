@@ -13,16 +13,8 @@ from pysilverline import DeviceState
 from .const import COOL_PREFIX_TO_PRESET, HEAT_PREFIX_TO_PRESET
 
 
-def compute_hvac_action(
-    state: DeviceState, last_direction: HVACMode | None = None
-) -> HVACAction | None:
+def compute_hvac_action(state: DeviceState) -> HVACAction | None:
     """Derive HVACAction from a DeviceState snapshot.
-
-    `last_direction` lets a caller (currently the climate entity) tell us
-    which direction the user last asked for, so that even while the unit
-    is OFF we *could* in principle synthesize a meaningful action. We
-    don't — OFF always maps to HVACAction.OFF — but the parameter is kept
-    so the signature is platform-friendly.
 
     The compressor-running heuristic:
     - DP 108 (actual_frequency), when exposed, is authoritative: 0 = parked,
@@ -84,7 +76,4 @@ def compute_hvac_action(
         if current > target:
             return HVACAction.COOLING
         return HVACAction.IDLE
-    # `last_direction` reserved for future OFF-aware callers; intentionally
-    # unused today so OFF stays OFF.
-    del last_direction
     return HVACAction.IDLE

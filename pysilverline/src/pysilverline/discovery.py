@@ -142,7 +142,16 @@ async def _bind_listeners(
     queue: asyncio.Queue[DiscoveryInfo],
 ) -> tuple[asyncio.DatagramTransport, asyncio.DatagramTransport]:
     """Bind to both Tuya discovery ports. Returns the two transports
-    so callers can close them when done."""
+    so callers can close them when done.
+
+    ``reuse_port=True`` maps to ``SO_REUSEPORT`` (Linux/BSD/macOS) and
+    will raise on Windows core installs — fine for HA OS / Supervised /
+    Container deployments, which are the supported targets. The Linux
+    kernel load-balances inbound datagrams across all sockets bound to
+    the same port, so a co-resident Tuya integration (tinytuya etc.)
+    sharing this port may steal a fraction of broadcasts; the Tuya
+    device repeats every ~25 s so the next sweep picks them up.
+    """
     loop = asyncio.get_running_loop()
     t_plain, _ = await loop.create_datagram_endpoint(
         lambda: _DiscoveryProtocol(queue, encrypted=False),

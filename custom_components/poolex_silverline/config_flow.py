@@ -25,6 +25,31 @@ _LOGGER = logging.getLogger(__name__)
 # successful get_status proves the new IP is the legitimate device.
 _DISCOVERY_VERIFY_TIMEOUT = 3.0
 
+# Tuya productKeys confirmed to correspond to Poolex / Silverline heat
+# pumps (from silverline-fe-specs.md plus a live capture from a PC-SLP090N
+# on 2026-05-24). The productKey identifies the OEM hardware family, not
+# the marketing SKU — the PC-SLP090N broadcasts the same
+# `3bhylhz5zhogklel` as the JetLine Selection FI.
+#
+# Filter policy:
+#   * productKey present AND in this set  → continue (known Poolex device).
+#   * productKey present AND not in set   → abort `unsupported_product`.
+#     Prevents a discovery card from popping up for every Tuya bulb / plug
+#     / camera / etc. on the LAN — they all broadcast on the same UDP port.
+#   * productKey missing / None           → continue, log known=False.
+#     Older Tuya firmware variants may not carry the field at all; rather
+#     than lock out a legitimate device that happens to predate the format,
+#     we let it through. The bulb/plug flood case always carries a key in
+#     practice, so this fallback does not weaken the filter for them.
+_KNOWN_POOLEX_PRODUCT_KEYS: frozenset[str] = frozenset(
+    {
+        "3bhylhz5zhogklel",  # Poolex JetLine Selection FI + PC-SLP090N (shared)
+        "wgpg4qdqg8dd3xtx",  # Brustec BR-80
+        "qrlLaHWwIsZsV31f",  # Phalén Calidi XP
+        "bf911310efade7bc43mzsm",  # Nulite (house-heating sibling)
+    }
+)
+
 _USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): cv.string,
@@ -167,6 +192,26 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         device_id = discovery_info["device_id"]
         host = discovery_info["ip"]
+        product_key = discovery_info.get("product_key")
+
+        # Reject co-resident Tuya devices (bulbs, plugs, cameras, …) before
+        # anyone sees a "Pool Heatpump" discovery card for them. Skip the
+        # check when productKey is missing entirely — older firmware may
+        # not broadcast the field, and the bulb/plug flood always carries
+        # one in practice.
+        if (
+            product_key is not None
+            and product_key not in _KNOWN_POOLEX_PRODUCT_KEYS
+        ):
+            _LOGGER.info(
+                "Silverline discovery: ignoring non-Poolex Tuya device"
+                " device=%s host=%s productKey=%s",
+                device_id,
+                host,
+                product_key,
+            )
+            return self.async_abort(reason="unsupported_product")
+
         await self.async_set_unique_id(device_id)
 
         existing = self.hass.config_entries.async_entry_for_domain_unique_id(
@@ -189,6 +234,19 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
                 return self.async_abort(reason="unverified_host")
             self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+
+        # Brand-new device path. Log the productKey so operators can tell
+        # at a glance whether the broadcast is a known Poolex heat pump or
+        # some other Tuya device on the LAN that happened to broadcast at
+        # the same time. Permissive by design — see _KNOWN_POOLEX_PRODUCT_KEYS.
+        product_key = discovery_info.get("product_key")
+        _LOGGER.info(
+            "Silverline discovery: device=%s host=%s productKey=%s known=%s",
+            device_id,
+            host,
+            product_key,
+            product_key in _KNOWN_POOLEX_PRODUCT_KEYS if product_key else False,
+        )
 
         self._discovery_host = host
         self._discovery_device_id = device_id

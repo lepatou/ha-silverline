@@ -24,4 +24,8 @@ async def test_diagnostics_redacts_secrets(
     assert "**REDACTED**" in flat
     assert "state" in diag
     assert diag["state"]["mode"] == "Heat"
-    assert diag["state"]["raw"] == "**REDACTED**"
+    # raw is intentionally kept un-redacted so an operator helping with a
+    # new firmware variant can see unmapped DPs in the dump. It holds DP
+    # numbers and values (temps, modes, fault bits) — no secrets.
+    assert isinstance(diag["state"]["raw"], dict)
+    assert diag["state"]["raw"]  # populated with the fixture's DPs

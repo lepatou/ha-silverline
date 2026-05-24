@@ -68,6 +68,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                             "device_id": info.device_id,
                             "ip": info.ip,
                             "version": info.version,
+                            # Forwarded so the config flow can decide whether
+                            # to treat this broadcast as a known Poolex device
+                            # or a co-resident Tuya bulb/plug/etc. The Tuya
+                            # broadcast format guarantees the field at the
+                            # JSON layer; pysilverline drops it to None only
+                            # if the value is missing or not a string.
+                            "product_key": info.product_key,
                         },
                     )
                 )

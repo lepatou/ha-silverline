@@ -111,17 +111,27 @@ class SilverlineClient:
         again explicitly.
         """
         self._closing = True
-        for task in (
-            self._heartbeat_task,
-            self._reader_task,
-            self._reconnect_task,
-        ):
-            if task and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
+        # Cancel all three background tasks together, then await them via
+        # gather(return_exceptions=True) so that:
+        #   * The CancelledError each task raises in response to our own
+        #     cancel() is captured as a returned value, not re-raised.
+        #   * If disconnect() itself is being cancelled by the caller, the
+        #     outer CancelledError still propagates out of `await gather`
+        #     — the previous `except (CancelledError, Exception)` swallowed
+        #     it, making this coroutine effectively non-cancellable.
+        tasks = [
+            t
+            for t in (
+                self._heartbeat_task,
+                self._reader_task,
+                self._reconnect_task,
+            )
+            if t and not t.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._heartbeat_task = None
         self._reader_task = None
         self._reconnect_task = None
@@ -483,7 +493,13 @@ class SilverlineClient:
                 # returning to a dead connection.
                 try:
                     await self.get_status()
-                except (CannotConnect, InvalidAuth) as err:
+                except SilverlineError as err:
+                    # SilverlineError covers CannotConnect / InvalidAuth /
+                    # ProtocolError / bare device-side retcode failures.
+                    # Any of them can land here transiently; we want the
+                    # reconnect task to keep working through the backoff
+                    # rather than die with an unhandled exception on a
+                    # socket that's technically up.
                     _LOGGER.debug("post-reconnect refresh failed: %s", err)
                 if not self.connected:
                     continue

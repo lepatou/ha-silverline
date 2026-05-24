@@ -175,7 +175,7 @@ class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
         # string we don't decode; surface that as None too, not IDLE.
         if state.power and self.hvac_mode is None:
             return None
-        return compute_hvac_action(state, self._last_direction)
+        return compute_hvac_action(state)
 
     @property
     def min_temp(self) -> float:

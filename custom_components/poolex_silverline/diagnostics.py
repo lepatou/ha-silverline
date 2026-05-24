@@ -21,11 +21,15 @@ TO_REDACT: set[str] = {
     "host",
     "ip",
     "local_key",
-    "raw",
     "serial_number",
     "title",
     "unique_id",
 }
+# Note: ``raw`` is intentionally NOT redacted. It carries the full DP map
+# from the wire (temps, modes, fault bits — no secrets), and is the only
+# place an *unmapped* DP shows up. Hiding it would defeat the main reason
+# a contributor would ask a user for a diagnostics dump when adding support
+# for a new firmware variant.
 
 
 async def async_get_config_entry_diagnostics(

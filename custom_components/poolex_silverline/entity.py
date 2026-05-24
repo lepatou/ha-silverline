@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from homeassistant.const import CONF_HOST
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -18,7 +17,6 @@ class SilverlineEntity(CoordinatorEntity[SilverlineCoordinator]):
     def __init__(self, coordinator: SilverlineCoordinator) -> None:
         super().__init__(coordinator)
         device_id = coordinator.device_info.device_id
-        host = coordinator.config_entry.data[CONF_HOST]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device_id)},
             manufacturer=MANUFACTURER,
@@ -26,5 +24,4 @@ class SilverlineEntity(CoordinatorEntity[SilverlineCoordinator]):
             name="Pool Heatpump",
             sw_version=coordinator.device_info.firmware,
             serial_number=device_id,
-            configuration_url=f"http://{host}/",
         )

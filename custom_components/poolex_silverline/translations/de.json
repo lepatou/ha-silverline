@@ -64,7 +64,8 @@
       "reauth_successful": "Neuauthentifizierung war erfolgreich.",
       "reconfigure_successful": "Neukonfiguration war erfolgreich.",
       "device_id_mismatch": "Die eingegebene Geräte-ID stimmt nicht mit dem ursprünglichen Gerät überein.",
-      "unverified_host": "Eine LAN-Broadcast-Meldung behauptete, dieses Gerät befinde sich an einer neuen IP, doch der neue Host konnte sich nicht mit dem gespeicherten Local Key authentifizieren. Der gespeicherte Host wurde nicht geändert."
+      "unverified_host": "Eine LAN-Broadcast-Meldung behauptete, dieses Gerät befinde sich an einer neuen IP, doch der neue Host konnte sich nicht mit dem gespeicherten Local Key authentifizieren. Der gespeicherte Host wurde nicht geändert.",
+      "unsupported_product": "Dieses Tuya-Gerät wurde nicht als unterstützte Poolex- / Silverline-Wärmepumpe erkannt (productKey passt zu keinem bekannten Modell). Sollte es sich um eine Wärmepumpe handeln, die unterstützt werden sollte, bitte ein Issue mit dem productKey aus den Logs öffnen."
     }
   },
   "entity": {

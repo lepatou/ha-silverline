@@ -217,6 +217,71 @@ async def test_async_setup_starts_discovery_task(
     assert not task.done()
 
 
+async def test_discovery_loop_forwards_product_key(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each broadcast carries a Tuya productKey identifying the device
+    type. The discovery loop must forward it through to the config flow
+    so the flow can tell a known Poolex unit from a co-resident Tuya
+    bulb/plug. Before this plumbing, the field was parsed out of the
+    UDP JSON in pysilverline and then silently dropped in __init__.py."""
+    from custom_components.poolex_silverline import async_setup
+    from custom_components.poolex_silverline.const import DOMAIN
+
+    queue: asyncio.Queue[DiscoveryInfo] = asyncio.Queue()
+
+    async def _mock_discover():
+        while True:
+            yield await queue.get()
+
+    monkeypatch.setattr(
+        "custom_components.poolex_silverline.discover", _mock_discover
+    )
+
+    init_calls: list[dict] = []
+
+    async def _spy_init(domain, *, context=None, data=None):
+        init_calls.append(data)
+        return {"type": "abort", "reason": "test"}
+
+    monkeypatch.setattr(hass.config_entries.flow, "async_init", _spy_init)
+
+    assert await async_setup(hass, {})
+    try:
+        await queue.put(
+            DiscoveryInfo(
+                device_id="dev1",
+                ip="10.0.0.1",
+                product_key="3bhylhz5zhogklel",
+            )
+        )
+        for _ in range(3):
+            await asyncio.sleep(0)
+        await hass.async_block_till_done()
+        assert init_calls == [
+            {
+                "device_id": "dev1",
+                "ip": "10.0.0.1",
+                "version": "3.3",
+                "product_key": "3bhylhz5zhogklel",
+            }
+        ]
+
+        # A broadcast that didn't include a productKey forwards None.
+        await queue.put(DiscoveryInfo(device_id="dev2", ip="10.0.0.2"))
+        for _ in range(3):
+            await asyncio.sleep(0)
+        await hass.async_block_till_done()
+        assert init_calls[-1]["product_key"] is None
+    finally:
+        task = hass.data[DOMAIN]["_discovery_task"]
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+
 async def test_discovery_loop_suppresses_duplicate_ip_but_refires_on_change(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:

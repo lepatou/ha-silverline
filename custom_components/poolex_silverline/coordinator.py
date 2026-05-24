@@ -86,6 +86,16 @@ class SilverlineCoordinator(DataUpdateCoordinator[DeviceState]):
         self._runtime_last_tick: datetime | None = None
         self._runtime_local_date: date | None = None
 
+    @property
+    def runtime_today_seconds(self) -> float:
+        """Read-only accessor for the today's-runtime accumulator.
+
+        Exists so sensor/diagnostics callers don't have to reach into
+        ``_runtime_today_seconds`` directly. The setter side stays
+        internal — only ``_tick_runtime`` may mutate it.
+        """
+        return self._runtime_today_seconds
+
     async def _async_setup(self) -> None:
         try:
             await self.client.connect()
