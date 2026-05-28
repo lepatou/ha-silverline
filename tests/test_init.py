@@ -347,3 +347,69 @@ async def test_discovery_loop_suppresses_duplicate_ip_but_refires_on_change(
             await task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
+
+
+async def test_discovery_loop_caps_seen_ips_against_flood(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A LAN attacker can mint Tuya UDP broadcasts with arbitrary gwIds
+    (the discovery key is public). The dedup map must be bounded so the
+    flood doesn't grow memory or spawn endless flow.async_init tasks.
+    Cap is 256 entries — pushing 257 unique devices evicts the oldest,
+    so a repeat of the very first device re-fires instead of being
+    suppressed."""
+    from custom_components.poolex_silverline import (
+        _DISCOVERY_SEEN_MAX,
+        async_setup,
+    )
+    from custom_components.poolex_silverline.const import DOMAIN
+
+    queue: asyncio.Queue[DiscoveryInfo] = asyncio.Queue()
+
+    async def _mock_discover():
+        while True:
+            yield await queue.get()
+
+    monkeypatch.setattr("custom_components.poolex_silverline.discover", _mock_discover)
+
+    init_calls: list[dict] = []
+
+    async def _spy_init(domain, *, context=None, data=None):
+        init_calls.append(data)
+        return {"type": "abort", "reason": "test"}
+
+    monkeypatch.setattr(hass.config_entries.flow, "async_init", _spy_init)
+    assert await async_setup(hass, {})
+
+    async def _drain(info: DiscoveryInfo) -> None:
+        await queue.put(info)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        await hass.async_block_till_done()
+
+    try:
+        # Fill the cap exactly: 256 distinct device_ids.
+        for i in range(_DISCOVERY_SEEN_MAX):
+            await _drain(DiscoveryInfo(device_id=f"dev{i}", ip="10.0.0.1"))
+        assert len(init_calls) == _DISCOVERY_SEEN_MAX
+
+        # Repeat of dev0 — still in the map, so suppressed.
+        before = len(init_calls)
+        await _drain(DiscoveryInfo(device_id="dev0", ip="10.0.0.1"))
+        assert len(init_calls) == before
+
+        # Push one MORE new device — that evicts dev0 (LRU oldest).
+        await _drain(DiscoveryInfo(device_id="overflow", ip="10.0.0.2"))
+        assert len(init_calls) == before + 1
+
+        # Now the repeat of dev0 re-fires because dev0 was evicted.
+        await _drain(DiscoveryInfo(device_id="dev0", ip="10.0.0.1"))
+        assert len(init_calls) == before + 2
+        assert init_calls[-1]["device_id"] == "dev0"
+    finally:
+        task = hass.data[DOMAIN]["_discovery_task"]
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass

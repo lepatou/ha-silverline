@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
@@ -31,6 +32,11 @@ PLATFORMS: list[Platform] = [
 
 _DISCOVERY_TASK_KEY = "_discovery_task"
 
+# Cap the per-loop dedup map so a hostile LAN peer can't flood it by
+# minting endless fake device_ids in spoofed broadcasts (the Tuya
+# discovery key is public). 256 is well above any plausible site count.
+_DISCOVERY_SEEN_MAX = 256
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Start the background UDP discovery listener once per HA process.
@@ -54,12 +60,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         # rewrite CONF_HOST on the existing entry — the original code's
         # unbounded set never let any second flow fire, so DHCP-driven
         # IP changes mid-session went unpropagated until HA restart.
-        seen_ips: dict[str, str] = {}
+        # OrderedDict so we can evict the oldest entry when the cap is
+        # hit. Insertion order is the eviction key — we deliberately do
+        # NOT move-to-end on duplicate hits, so a flooder repeating one
+        # spoofed device_id cannot pin themselves at the front and push
+        # real devices out.
+        seen_ips: OrderedDict[str, str] = OrderedDict()
         try:
             async for info in discover():
                 if seen_ips.get(info.device_id) == info.ip:
                     continue
                 seen_ips[info.device_id] = info.ip
+                while len(seen_ips) > _DISCOVERY_SEEN_MAX:
+                    seen_ips.popitem(last=False)
                 hass.async_create_task(
                     hass.config_entries.flow.async_init(
                         DOMAIN,

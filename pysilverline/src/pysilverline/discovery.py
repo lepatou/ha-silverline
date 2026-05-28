@@ -110,13 +110,22 @@ def _decode_broadcast(data: bytes, *, encrypted: bool) -> DiscoveryInfo | None:
     ip = parsed.get("ip")
     if not isinstance(gw_id, str) or not isinstance(ip, str):
         return None
+    # Reject hostile broadcasts that try to embed control characters
+    # in identifier fields (log-injection vector — these strings get
+    # logged at INFO by the integration).
+    if not gw_id.isprintable() or not ip.isprintable():
+        return None
+    product_key_raw = parsed.get("productKey")
+    product_key = (
+        product_key_raw
+        if isinstance(product_key_raw, str) and product_key_raw.isprintable()
+        else None
+    )
     return DiscoveryInfo(
         device_id=gw_id,
         ip=ip,
         version=str(parsed.get("version", "3.3")),
-        product_key=parsed.get("productKey")
-        if isinstance(parsed.get("productKey"), str)
-        else None,
+        product_key=product_key,
         encrypt=bool(parsed.get("encrypt", encrypted)),
     )
 

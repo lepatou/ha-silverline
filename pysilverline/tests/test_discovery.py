@@ -130,6 +130,31 @@ def test_decode_rejects_garbage_random_bytes() -> None:
         assert _decode_broadcast(os.urandom(200), encrypted=True) is None
 
 
+def test_decode_rejects_control_chars_in_identifier_fields() -> None:
+    """Log-injection defense: a hostile LAN peer can mint a frame with
+    embedded control characters in gwId/ip/productKey. _decode_broadcast
+    must drop these so they never reach _LOGGER calls in the integration."""
+    for body in (
+        {"gwId": "bf\nINJECTED", "ip": "1.2.3.4"},
+        {"gwId": "bf", "ip": "1.2.3.4\x00\x1b[31mfake"},
+        {"gwId": "bf", "ip": "1.2.3.4", "productKey": "abc\ndef"},
+    ):
+        frame = _build_broadcast(body, encrypted=True)
+        info = _decode_broadcast(frame, encrypted=True)
+        # gwId/ip with control chars → whole packet dropped.
+        # productKey with control chars → packet kept, productKey is None.
+        if (
+            "productKey" in body
+            and isinstance(body.get("gwId"), str)
+            and body["gwId"].isprintable()
+            and body["ip"].isprintable()
+        ):
+            assert info is not None
+            assert info.product_key is None
+        else:
+            assert info is None
+
+
 def test_decode_rejects_undecryptable_ciphertext() -> None:
     """A correctly-framed packet whose body is encrypted with a different
     key (e.g. another app on the LAN) must drop silently."""
