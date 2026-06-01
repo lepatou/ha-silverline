@@ -14,7 +14,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from pysilverline import SilverlineClient, discover
 
-from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, DOMAIN
+from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, CONF_PROTOCOL_VERSION, DOMAIN
 from .coordinator import SilverlineConfigEntry, SilverlineCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -110,6 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SilverlineConfigEntry) -
         port=entry.data[CONF_PORT],
         device_id=entry.data[CONF_DEVICE_ID],
         local_key=entry.data[CONF_LOCAL_KEY],
+        protocol_version=entry.data.get(CONF_PROTOCOL_VERSION),
     )
     coordinator = SilverlineCoordinator(hass, entry, client)
     # _async_setup opens the TCP socket and registers push + connection

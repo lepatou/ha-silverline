@@ -102,6 +102,7 @@ async def test_get_status_round_trip() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=2.0,
         )
         await client.connect()
@@ -181,6 +182,7 @@ async def test_poll_merges_with_prior_push_state() -> None:
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -224,6 +226,7 @@ async def test_set_dp_sends_control_and_merges_state() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=2.0,
         )
         await client.connect()
@@ -270,6 +273,7 @@ async def test_push_listener_receives_spontaneous_status() -> None:
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=2.0,
         )
         client.add_listener(lambda s: pushed.append(s))
@@ -314,6 +318,7 @@ async def test_invalid_auth_on_decryption_failure() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=2.0,
         )
         await client.connect()
@@ -330,6 +335,7 @@ async def test_connect_failure_raises_cannot_connect() -> None:
         port=1,  # nothing listens on port 1
         device_id=DEVICE_ID,
         local_key=KEY,
+            protocol_version="3.3",
         request_timeout=0.5,
     )
     with pytest.raises(CannotConnect):
@@ -342,6 +348,7 @@ async def test_request_before_connect_raises() -> None:
         port=1,
         device_id=DEVICE_ID,
         local_key=KEY,
+            protocol_version="3.3",
     )
     with pytest.raises(CannotConnect):
         await client.get_status()
@@ -356,6 +363,7 @@ async def test_connection_listener_receives_connect_event() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_connection_listener(events.append)
@@ -375,6 +383,7 @@ async def test_connection_listener_unsubscribe() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         unsub = client.add_connection_listener(events.append)
@@ -446,6 +455,7 @@ async def test_get_status_survives_tcp_fragmented_response() -> None:
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=2.0,
         )
         await client.connect()
@@ -527,6 +537,7 @@ async def test_reconnect_on_peer_close(monkeypatch: pytest.MonkeyPatch) -> None:
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_connection_listener(events.append)
@@ -602,6 +613,7 @@ async def test_oversize_frame_header_closes_connection(
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_connection_listener(events.append)
@@ -660,6 +672,7 @@ async def test_back_to_back_drops_keep_triggering_reconnects(
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=0.2,
         )
         await client.connect()
@@ -761,6 +774,7 @@ async def test_reconnect_survives_protocol_error_in_post_reconnect_status(
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -828,6 +842,7 @@ async def test_disconnect_propagates_outer_cancel(
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=0.5,
         )
         await client.connect()
@@ -885,6 +900,7 @@ async def test_disconnect_cancels_reconnect_task(
             port=port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()

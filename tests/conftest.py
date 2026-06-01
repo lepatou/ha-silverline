@@ -110,6 +110,7 @@ def mock_client(state_pool_running: DeviceState) -> MagicMock:
     client.device_id = DEVICE_ID
     client.connected = True
     client.state = state_pool_running
+    client.detected_version = "3.3"
     client.connect = AsyncMock(return_value=None)
     client.disconnect = AsyncMock(return_value=None)
     client.get_status = AsyncMock(return_value=state_pool_running)

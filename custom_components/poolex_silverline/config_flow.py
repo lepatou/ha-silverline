@@ -18,7 +18,7 @@ from homeassistant.helpers.selector import (
 
 from pysilverline import CannotConnect, InvalidAuth, SilverlineClient
 
-from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, DEFAULT_PORT, DOMAIN
+from .const import CONF_DEVICE_ID, CONF_LOCAL_KEY, CONF_PROTOCOL_VERSION, DEFAULT_PORT, DOMAIN
 from .util import mask_device_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,21 +77,24 @@ _DISCOVERY_CONFIRM_SCHEMA = vol.Schema(
 )
 
 
-async def _validate(data: Mapping[str, Any]) -> None:
+async def _validate(data: Mapping[str, Any]) -> str | None:
     """Open a connection with the supplied credentials and pull status once.
 
-    Raises CannotConnect or InvalidAuth on failure; returns silently on
-    success. Always closes the socket before returning.
+    Returns the detected protocol version (e.g. ``"3.3"`` or ``"3.5"``) on
+    success.  Raises CannotConnect or InvalidAuth on failure.  Always closes
+    the socket before returning.
     """
     client = SilverlineClient(
         host=data[CONF_HOST],
         port=data.get(CONF_PORT, DEFAULT_PORT),
         device_id=data[CONF_DEVICE_ID],
         local_key=data[CONF_LOCAL_KEY],
+        protocol_version=data.get(CONF_PROTOCOL_VERSION),
     )
     try:
         await client.connect()
         await client.get_status()
+        return client.detected_version
     finally:
         await client.disconnect()
 
@@ -100,7 +103,7 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the user, reauth, reconfigure, and discovery flows."""
 
     VERSION = 1
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         super().__init__()
@@ -114,11 +117,14 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             await self.async_set_unique_id(user_input[CONF_DEVICE_ID])
             self._abort_if_unique_id_configured()
-            error = await self._try_validate(user_input)
+            error, version = await self._try_validate(user_input)
             if error is None:
+                data = dict(user_input)
+                if version is not None:
+                    data[CONF_PROTOCOL_VERSION] = version
                 return self.async_create_entry(
                     title=f"Pool Heatpump ({user_input[CONF_HOST]})",
-                    data=user_input,
+                    data=data,
                 )
             errors["base"] = error
 
@@ -139,11 +145,12 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             candidate = {**entry.data, CONF_LOCAL_KEY: user_input[CONF_LOCAL_KEY]}
-            error = await self._try_validate(candidate)
+            error, version = await self._try_validate(candidate)
             if error is None:
-                return self.async_update_reload_and_abort(
-                    entry, data_updates={CONF_LOCAL_KEY: user_input[CONF_LOCAL_KEY]}
-                )
+                updates: dict[str, Any] = {CONF_LOCAL_KEY: user_input[CONF_LOCAL_KEY]}
+                if version is not None:
+                    updates[CONF_PROTOCOL_VERSION] = version
+                return self.async_update_reload_and_abort(entry, data_updates=updates)
             errors["base"] = error
 
         return self.async_show_form(
@@ -161,11 +168,12 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             await self.async_set_unique_id(user_input[CONF_DEVICE_ID])
             self._abort_if_unique_id_mismatch(reason="device_id_mismatch")
-            error = await self._try_validate(user_input)
+            error, version = await self._try_validate(user_input)
             if error is None:
-                return self.async_update_reload_and_abort(
-                    entry, data_updates=user_input
-                )
+                updates = dict(user_input)
+                if version is not None:
+                    updates[CONF_PROTOCOL_VERSION] = version
+                return self.async_update_reload_and_abort(entry, data_updates=updates)
             errors["base"] = error
 
         return self.async_show_form(
@@ -312,8 +320,10 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_DEVICE_ID: self._discovery_device_id,
                 CONF_LOCAL_KEY: user_input[CONF_LOCAL_KEY],
             }
-            error = await self._try_validate(candidate)
+            error, version = await self._try_validate(candidate)
             if error is None:
+                if version is not None:
+                    candidate[CONF_PROTOCOL_VERSION] = version
                 return self.async_create_entry(
                     title=f"Pool Heatpump ({self._discovery_host})",
                     data=candidate,
@@ -327,21 +337,24 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     @staticmethod
-    async def _try_validate(data: Mapping[str, Any]) -> str | None:
+    async def _try_validate(
+        data: Mapping[str, Any],
+    ) -> tuple[str | None, str | None]:
         """Run _validate and translate errors to error keys.
 
-        Returns ``None`` on success, or a translation key on failure.
+        Returns ``(error_key, protocol_version)``.  On success, error_key is
+        None and protocol_version holds the detected value.  On failure,
+        error_key is set and protocol_version is None.
         """
         try:
-            await _validate(data)
+            version = await _validate(data)
         except CannotConnect:
-            return "cannot_connect"
+            return "cannot_connect", None
         except InvalidAuth:
-            return "invalid_auth"
+            return "invalid_auth", None
         except ValueError:
-            # local_key length / format issue (must be 16 ASCII bytes)
-            return "invalid_auth"
+            return "invalid_auth", None
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Unexpected error during validation")
-            return "unknown"
-        return None
+            return "unknown", None
+        return None, version

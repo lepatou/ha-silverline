@@ -1,9 +1,12 @@
-"""High-level async client for a Poolex Silverline / Tuya v3.3 heat pump."""
+"""High-level async client for a Poolex Silverline / Tuya heat pump (v3.3 and v3.5)."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac as _hmac
 import logging
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -17,13 +20,14 @@ from .exceptions import (
     SilverlineError,
 )
 from .models import DeviceState
-from .protocol import Frame, FrameCodec, is_invalid_auth_retcode
+from .protocol import Frame, Frame35Codec, FrameCodec, derive_session_key_35, is_invalid_auth_retcode
 
 _LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_REQUEST_TIMEOUT: float = 10.0
 _HEARTBEAT_INTERVAL: float = 10.0
 _RECONNECT_BACKOFF: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0)
+_HANDSHAKE_TIMEOUT: float = 5.0  # per-probe timeout for v3.5 negotiation
 _READ_CHUNK: int = 4096
 # Hard cap on the inbound buffer when no complete frame has decoded yet. A
 # legitimate frame is < 64 KiB (see protocol._MAX_FRAME_SIZE); 256 KiB gives
@@ -35,13 +39,24 @@ PushListener = Callable[[DeviceState], None]
 ConnectionListener = Callable[[bool], None]
 
 
-class SilverlineClient:
-    """Async client for one Tuya v3.3 device.
+def _close_writer_silent(writer: asyncio.StreamWriter) -> None:
+    try:
+        writer.close()
+    except OSError:
+        pass
 
-    Lifecycle: ``connect()`` opens a persistent socket and starts a background
-    reader. ``get_status`` / ``set_dp`` / ``set_multiple`` issue commands.
-    Spontaneous DP pushes from the device are forwarded to listeners
-    registered via ``add_listener``. ``disconnect()`` shuts everything down.
+
+class SilverlineClient:
+    """Async client for one Tuya device (v3.3 or v3.5, auto-detected).
+
+    Lifecycle: ``connect()`` opens a persistent socket, runs the v3.5
+    handshake if applicable, and starts a background reader.
+    ``get_status`` / ``set_dp`` / ``set_multiple`` issue commands.
+    Spontaneous DP pushes are forwarded to listeners registered via
+    ``add_listener``.  ``disconnect()`` shuts everything down.
+
+    Pass ``protocol_version="3.3"`` or ``"3.5"`` to pin the version; omit it
+    (or pass ``None``) to auto-probe — v3.5 is tried first, then v3.3.
     """
 
     def __init__(
@@ -52,12 +67,20 @@ class SilverlineClient:
         *,
         port: int = const.DEFAULT_PORT,
         request_timeout: float = _DEFAULT_REQUEST_TIMEOUT,
+        protocol_version: str | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.device_id = device_id
-        self._codec = FrameCodec(local_key)
         self._timeout = request_timeout
+        self._protocol_version = protocol_version  # None = auto-probe
+
+        self._codec_33 = FrameCodec(local_key)
+        self._codec_35 = Frame35Codec(local_key)
+        # Active codec — set during connect() after version detection.
+        self._codec: FrameCodec | Frame35Codec = self._codec_33
+        # Persists across reconnects once detected; starts as the pinned version.
+        self._detected_version: str | None = protocol_version
 
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -81,20 +104,61 @@ class SilverlineClient:
     def state(self) -> DeviceState:
         return self._state
 
+    @property
+    def detected_version(self) -> str | None:
+        """Protocol version detected on the last successful connect, or None."""
+        return self._detected_version
+
     async def connect(self) -> None:
-        """Open the TCP connection and start the background reader."""
+        """Open the TCP connection, negotiate protocol version, start reader."""
         if self.connected:
             return
         self._closing = False
         self._connection_lost_handled = False
-        try:
-            self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port),
-                timeout=self._timeout,
-            )
-        except (OSError, asyncio.TimeoutError) as err:
-            raise CannotConnect(f"connect {self.host}:{self.port}: {err}") from err
 
+        # Reset the v3.5 codec to the real key before each new connection so
+        # a stale session key from a previous TCP session is never reused.
+        self._codec_35.reset()
+
+        reader, writer = await self._open_tcp()
+
+        # --- Version negotiation (runs before starting the background reader) ---
+        if self._protocol_version == "3.3":
+            # Pinned to v3.3 — skip probe entirely.
+            self._codec = self._codec_33
+            self._detected_version = "3.3"
+        elif self._protocol_version == "3.5" or self._detected_version in ("3.5", None):
+            # Try v3.5 handshake. If it fails and we are NOT pinned to v3.5 and
+            # have NOT previously confirmed v3.5, fall back to v3.3 on a fresh
+            # connection (the probe may have left the current TCP socket unusable).
+            try:
+                ok = await self._handshake_35(reader, writer)
+            except Exception:
+                _close_writer_silent(writer)
+                raise
+
+            if ok:
+                self._codec = self._codec_35
+                self._detected_version = "3.5"
+            elif self._protocol_version == "3.5" or self._detected_version == "3.5":
+                _close_writer_silent(writer)
+                raise CannotConnect(f"v3.5 handshake with {self.host} failed")
+            else:
+                # Auto-probe failed → discard potentially poisoned connection and
+                # open a fresh one for v3.3.  The reconnect penalty only occurs
+                # once: after we detect "3.3" we skip the probe on all future
+                # reconnects.
+                _close_writer_silent(writer)
+                _LOGGER.debug("v3.5 probe failed for %s; connecting as v3.3", self.host)
+                reader, writer = await self._open_tcp()
+                self._codec = self._codec_33
+                self._detected_version = "3.3"
+        else:
+            self._codec = self._codec_33
+            self._detected_version = "3.3"
+
+        self._reader = reader
+        self._writer = writer
         self._reader_task = asyncio.create_task(
             self._read_loop(), name=f"silverline-read-{self.host}"
         )
@@ -102,6 +166,107 @@ class SilverlineClient:
             self._heartbeat_loop(), name=f"silverline-hb-{self.host}"
         )
         self._notify_connection(True)
+
+    async def _open_tcp(
+        self,
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        try:
+            return await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port),
+                timeout=self._timeout,
+            )
+        except (OSError, asyncio.TimeoutError) as err:
+            raise CannotConnect(f"connect {self.host}:{self.port}: {err}") from err
+
+    async def _handshake_35(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> bool:
+        """Perform the v3.5 three-message session-key negotiation.
+
+        Returns True on success.  Propagates InvalidAuth (wrong key).
+        Returns False on any other failure (wrong protocol version, timeout,
+        network error) so the caller can fall back to v3.3.
+        """
+        local_nonce = os.urandom(16)
+        codec = self._codec_35
+
+        # --- Step 1: send SESS_KEY_NEG_START (cmd 0x03) ---
+        try:
+            wire = codec.encode_raw(const.SESS_KEY_NEG_START, local_nonce)
+            writer.write(wire)
+            await writer.drain()
+        except (OSError, ConnectionError):
+            return False
+
+        # --- Step 2: receive SESS_KEY_NEG_RESP (cmd 0x04) ---
+        buf = bytearray()
+        try:
+            frame = await asyncio.wait_for(
+                self._recv_35_frame(reader, codec, buf),
+                timeout=_HANDSHAKE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            return False
+        except InvalidAuth:
+            raise
+        except Exception:
+            return False
+
+        if frame.cmd != const.SESS_KEY_NEG_RESP:
+            return False
+
+        # Decrypted payload: [retcode(4)] + remote_nonce(16) + HMAC-SHA256(32)
+        raw = frame.payload
+        if len(raw) >= 52 and raw[0:1] != b"{":
+            raw = raw[4:]  # strip retcode
+        if len(raw) < 48:
+            return False
+
+        remote_nonce = raw[:16]
+        expected_hmac = _hmac.new(
+            self._codec_35._real_key, local_nonce, hashlib.sha256
+        ).digest()
+        if not _hmac.compare_digest(expected_hmac, raw[16:48]):
+            _LOGGER.debug("v3.5 handshake HMAC mismatch for %s", self.host)
+            return False
+
+        # --- Step 3: derive session key, send SESS_KEY_NEG_FINISH (cmd 0x05) ---
+        session_key = derive_session_key_35(
+            local_nonce, remote_nonce, self._codec_35._real_key
+        )
+        codec.update_session_key(session_key)
+
+        finish_hmac = _hmac.new(
+            self._codec_35._real_key, remote_nonce, hashlib.sha256
+        ).digest()
+        try:
+            wire = codec.encode_raw(const.SESS_KEY_NEG_FINISH, finish_hmac)
+            writer.write(wire)
+            await writer.drain()
+        except (OSError, ConnectionError):
+            return False
+
+        return True
+
+    @staticmethod
+    async def _recv_35_frame(
+        reader: asyncio.StreamReader,
+        codec: Frame35Codec,
+        buf: bytearray,
+    ) -> Frame:
+        """Accumulate bytes from ``reader`` until one complete v3.5 frame decodes."""
+        while True:
+            chunk = await reader.read(4096)
+            if not chunk:
+                raise CannotConnect("connection closed during handshake")
+            buf.extend(chunk)
+            try:
+                frame, _ = codec.decode(bytes(buf))
+                return frame
+            except IncompleteFrame:
+                continue
 
     async def disconnect(self) -> None:
         """Close the connection and stop background tasks.
@@ -256,8 +421,7 @@ class SilverlineClient:
 
         async with self._send_lock:
             wire = self._codec.encode(cmd, body)
-            # The seq the codec assigned occupies bytes 4..8 of the frame.
-            frame_seq = int.from_bytes(wire[4:8], "big")
+            frame_seq = self._codec.extract_seq_from_wire(wire)
             self._pending[frame_seq] = future
             try:
                 writer = self._writer
@@ -316,7 +480,7 @@ class SilverlineClient:
                     self._close_writer()
                     break
                 drop_connection = False
-                while len(buf) >= 24:
+                while len(buf) >= 18:
                     try:
                         frame, remainder = self._codec.decode(bytes(buf))
                     except IncompleteFrame:

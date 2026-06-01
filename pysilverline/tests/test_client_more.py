@@ -109,6 +109,7 @@ async def test_connect_is_idempotent_when_already_connected() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -157,6 +158,7 @@ async def test_connection_listener_exception_does_not_break_client() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_connection_listener(boom)
@@ -198,6 +200,7 @@ async def test_push_listener_exception_is_swallowed() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_listener(boom)
@@ -253,6 +256,7 @@ async def test_set_dp_wraps_set_multiple() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -274,6 +278,7 @@ async def test_set_multiple_empty_is_noop() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -321,6 +326,7 @@ async def test_set_multiple_invalid_auth_retcode() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -365,6 +371,7 @@ async def test_set_multiple_nonzero_retcode_raises_silverline_error() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -414,6 +421,7 @@ async def test_get_status_invalid_auth_retcode_raises() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -456,6 +464,7 @@ async def test_get_status_nonzero_retcode_raises_silverline_error() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -490,6 +499,7 @@ async def test_get_status_times_out_when_device_silent() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=0.2,
         )
         await client.connect()
@@ -520,6 +530,7 @@ async def test_request_after_writer_dies_raises_cannot_connect() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=0.3,
         )
         await client.connect()
@@ -585,6 +596,7 @@ async def test_undecryptable_push_is_ignored() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_listener(pushed.append)
@@ -633,6 +645,7 @@ async def test_push_with_empty_dps_is_ignored() -> None:
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_listener(pushed.append)
@@ -694,6 +707,7 @@ async def test_buffer_overflow_drops_connection(
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_connection_listener(events.append)
@@ -757,6 +771,7 @@ async def test_heartbeat_is_sent_periodically(
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         await client.connect()
@@ -811,6 +826,7 @@ async def test_heartbeat_failure_triggers_reconnect(
             port=server.port,
             device_id=DEVICE_ID,
             local_key=KEY,
+            protocol_version="3.3",
             request_timeout=1.0,
         )
         client.add_connection_listener(events.append)
@@ -979,6 +995,7 @@ async def test_reconnect_gives_up_after_backoff_exhausted(
         port=port,
         device_id=DEVICE_ID,
         local_key=KEY,
+            protocol_version="3.3",
         request_timeout=0.1,
     )
     await client.connect()

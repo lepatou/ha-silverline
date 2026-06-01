@@ -15,6 +15,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.poolex_silverline.const import (
     CONF_DEVICE_ID,
     CONF_LOCAL_KEY,
+    CONF_PROTOCOL_VERSION,
     DOMAIN,
 )
 
@@ -34,7 +35,7 @@ async def test_user_flow_happy_path(hass: HomeAssistant, mock_client_factory) ->
     flow_id = await _start_user_flow(hass)
     result = await hass.config_entries.flow.async_configure(flow_id, ENTRY_DATA)
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == ENTRY_DATA
+    assert result["data"] == {**ENTRY_DATA, CONF_PROTOCOL_VERSION: "3.3"}
     assert result["title"].startswith("Pool Heatpump")
     assert result["result"].unique_id == DEVICE_ID
 

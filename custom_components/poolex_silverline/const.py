@@ -10,6 +10,7 @@ MODEL: Final = "Silverline Inverter (PC-SLP090N)"
 
 CONF_DEVICE_ID: Final = "device_id"
 CONF_LOCAL_KEY: Final = "local_key"
+CONF_PROTOCOL_VERSION: Final = "protocol_version"
 
 DEFAULT_PORT: Final = 6668
 DEFAULT_SCAN_INTERVAL: Final = 30  # seconds; WBR3 reboots if polled <8s
