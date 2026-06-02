@@ -95,7 +95,10 @@ class SilverlineClient:
         self._reconnect_task: asyncio.Task[None] | None = None
         self._send_lock = asyncio.Lock()
 
-        self._pending: dict[int, asyncio.Future[Frame]] = {}
+        # seq -> (request cmd, future). The cmd is kept so v3.5 responses,
+        # which do NOT echo our seqno, can be correlated by cmd (see
+        # ``_take_pending``).
+        self._pending: dict[int, tuple[int, asyncio.Future[Frame]]] = {}
         self._listeners: list[PushListener] = []
         self._connection_listeners: list[ConnectionListener] = []
         self._state = DeviceState()
@@ -315,7 +318,7 @@ class SilverlineClient:
         self._reader_task = None
         self._reconnect_task = None
 
-        for fut in self._pending.values():
+        for _cmd, fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(CannotConnect("client disconnecting"))
         self._pending.clear()
@@ -436,7 +439,7 @@ class SilverlineClient:
         async with self._send_lock:
             wire = self._codec.encode(cmd, body)
             frame_seq = self._codec.extract_seq_from_wire(wire)
-            self._pending[frame_seq] = future
+            self._pending[frame_seq] = (cmd, future)
             try:
                 writer = self._writer
                 if writer is None:
@@ -526,26 +529,60 @@ class SilverlineClient:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("read loop crashed")
         finally:
-            for fut in self._pending.values():
+            for _cmd, fut in self._pending.values():
                 if not fut.done():
                     fut.set_exception(CannotConnect("connection lost"))
             self._pending.clear()
             self._on_connection_dropped()
 
+    def _take_pending(self, cmd: int, seq: int) -> asyncio.Future[Frame] | None:
+        """Pop the request future a response with ``(cmd, seq)`` belongs to.
+
+        v3.3/v3.4 devices echo our request seqno, so an exact ``(seq, cmd)``
+        match is unambiguous and we use it for every version.
+
+        v3.5 devices instead answer with their own global, monotonically
+        increasing seqno that bears no relation to the request's — confirmed
+        against TinyTuya ``XenonDevice._get_retcode``, which gates its
+        ``sent.seqno != msg.seqno`` check behind ``version < 3.5`` with the
+        comment "v3.5 devices respond with a global incrementing seqno, not
+        the sent seqno". For v3.5 we therefore correlate by cmd alone,
+        resolving the OLDEST outstanding request of that cmd: a single TCP
+        connection serialises requests, so the device answers in send order.
+        Without this every v3.5 data request waits for a seqno echo that never
+        arrives and times out — the integration connects, then is unusable.
+
+        Limitation (v3.5 only): with no seqno to reject on, a late response to a
+        timed-out request can resolve a *later* same-cmd request's future. This
+        is benign here — our requests are full-state snapshots (DP_QUERY) or
+        idempotent writes (CONTROL), self-correcting on the next poll — and
+        tinytuya is looser still (no correlation at all).
+        """
+        entry = self._pending.get(seq)
+        if entry is not None and entry[0] == cmd:
+            del self._pending[seq]
+            return entry[1]
+        if self._detected_version == "3.5":
+            # dict preserves insertion order → first match is the oldest request
+            match_seq = next(
+                (s for s, (c, _f) in self._pending.items() if c == cmd), None
+            )
+            if match_seq is not None:
+                return self._pending.pop(match_seq)[1]
+        return None
+
     def _dispatch(self, frame: Frame) -> None:
-        # Match request echoes by both seq AND cmd. Push frames (CMD_STATUS)
-        # carry their own seqs from the device and could theoretically collide
-        # with one of our outstanding request seqs; gating on cmd guarantees
-        # a push payload is never delivered to a request future that can't
+        # Correlate a response to the request awaiting it. Push frames
+        # (CMD_STATUS) carry their own seqs from the device and must never be
+        # delivered to a request future; the cmd gate in front of the match
+        # guarantees a push payload is never handed to a request that can't
         # decode it.
-        if (
-            frame.cmd in (const.CMD_CONTROL, const.CMD_DP_QUERY, const.CMD_DP_REFRESH)
-            and frame.seq in self._pending
-        ):
-            fut = self._pending.pop(frame.seq)
-            if not fut.done():
-                fut.set_result(frame)
-            return
+        if frame.cmd in (const.CMD_CONTROL, const.CMD_DP_QUERY, const.CMD_DP_REFRESH):
+            fut = self._take_pending(frame.cmd, frame.seq)
+            if fut is not None:
+                if not fut.done():
+                    fut.set_result(frame)
+                return
 
         if frame.cmd in (const.CMD_STATUS, const.CMD_DP_REFRESH):
             ciphertext = self._codec.split_request_payload(frame.payload)

@@ -40,11 +40,12 @@ REMOTE_NONCE = bytes(range(16, 32))
 
 
 def _encode_35(seq: int, cmd: int, plaintext: bytes, key: bytes) -> bytes:
-    """Build one 6699 frame with an explicit seq (so responses echo the request).
+    """Build one 6699 frame with an explicit seq and encryption key.
 
-    Mirrors ``Frame35Codec._build_frame`` but lets the caller pin ``seq`` and
-    the encryption key — the client matches request echoes by seq, and the
-    server must respond under whichever key (real vs session) is currently live.
+    Mirrors ``Frame35Codec._build_frame`` but lets the caller pin ``seq`` (the
+    server emits a device-global response seqno via ``_next_resp_seq``, NOT an
+    echo of the request — see that method) and the key, since the server must
+    respond under whichever key (real vs session) is currently live.
     """
     iv = os.urandom(12)
     length = 12 + len(plaintext) + 16
@@ -86,6 +87,18 @@ class FakeTuya35Server:
         self.drop_after_handshake = False
         # A writer we can push spontaneous frames through, set once connected.
         self._writer: asyncio.StreamWriter | None = None
+        # Device-global response seqno. Real v3.5 devices answer with their own
+        # monotonically-increasing counter, NOT the request's seqno (TinyTuya
+        # XenonDevice._get_retcode only compares seqno for version < 3.5). It
+        # starts well above the client's handful of per-connection request seqs
+        # so a response seq never coincides with a pending request seq — a
+        # client that (wrongly) matches responses by seqno then times out,
+        # turning the correlation bug into an observable RED.
+        self._resp_seq = 0x8000
+
+    def _next_resp_seq(self) -> int:
+        self._resp_seq += 1
+        return self._resp_seq
 
     async def __aenter__(self) -> "FakeTuya35Server":
         self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
@@ -195,7 +208,11 @@ class FakeTuya35Server:
                         handler = self.handlers.get(frame.cmd)
                         if handler is not None:
                             assert session_key is not None
-                            response = handler(frame.seq, decrypted, session_key)
+                            # Respond with a device-global seqno, NOT the
+                            # request's — see _next_resp_seq.
+                            response = handler(
+                                self._next_resp_seq(), decrypted, session_key
+                            )
                             if response is not None:
                                 writer.write(response)
                                 await writer.drain()
@@ -280,6 +297,43 @@ async def test_v35_pinned_handshake_and_get_status() -> None:
             assert client.detected_version == "3.5"
             state = await client.get_status()
             assert state.power is False
+        finally:
+            await client.disconnect()
+
+
+async def test_v35_response_seq_does_not_echo_request() -> None:
+    """Regression: v3.5 responses carry a device-global seqno, not our echo.
+
+    The fake answers DP_QUERY with ``_next_resp_seq()`` — a counter starting at
+    0x8000, far above the client's per-connection request seqs — so the
+    response seq provably never equals the request seq. A client that
+    correlates responses by seqno (the v3.3 model) would never resolve the
+    request future and ``get_status`` would raise ``CannotConnect`` on timeout.
+    This passes only because the client matches v3.5 responses by cmd. Verified
+    against TinyTuya ``XenonDevice._get_retcode`` (seqno compared only for
+    ``version < 3.5``).
+    """
+    async with FakeTuya35Server() as server:
+        server.handlers[const.CMD_DP_QUERY] = _dp_query_handler(
+            {"1": True, "4": "Heat", "3": 27}
+        )
+        client = SilverlineClient(
+            host="127.0.0.1",
+            port=server.port,
+            device_id=DEVICE_ID,
+            local_key=KEY,
+            protocol_version="3.5",
+            request_timeout=2.0,
+        )
+        await client.connect()
+        try:
+            state = await client.get_status()
+            assert state.power is True
+            assert state.mode == "Heat"
+            assert state.temp_current == 27
+            # Prove the premise: the server's response seq was its own global
+            # counter (>= 0x8001), never the request's small seqno.
+            assert server._resp_seq >= 0x8001
         finally:
             await client.disconnect()
 

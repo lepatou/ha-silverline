@@ -41,6 +41,14 @@ class FakeTuya35Server:
         self.finish_decoded_with_real_key = False
         self.finish_hmac_ok = False
         self._server: asyncio.base_events.Server | None = None
+        # Device-global response seqno: real v3.5 devices do NOT echo the
+        # request's seqno (TinyTuya XenonDevice._get_retcode compares seqno
+        # only for version < 3.5). Start above the client's request seqs.
+        self._resp_seq = 0x8000
+
+    def _next_resp_seq(self) -> int:
+        self._resp_seq += 1
+        return self._resp_seq
 
     async def __aenter__(self) -> "FakeTuya35Server":
         self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
@@ -113,7 +121,7 @@ class FakeTuya35Server:
                         )
                         writer.write(
                             _encode_35(
-                                frame.seq,
+                                self._next_resp_seq(),  # global seqno, not an echo
                                 const.CMD_DP_QUERY,
                                 payload,
                                 session_key,
