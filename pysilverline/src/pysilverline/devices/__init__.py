@@ -20,7 +20,7 @@ MODEL_STANDARD: Final = "standard"
 MODEL_SILVERLINE_V34: Final = "silverline_v34"
 
 #: Canonical model key -> layout. Keys are the persisted ``CONF_MODEL`` values.
-_REGISTRY: dict[str, DpLayout] = {
+_REGISTRY: Final[dict[str, DpLayout]] = {
     MODEL_STANDARD: LAYOUT_STANDARD,
     MODEL_SILVERLINE_V34: LAYOUT_V34_WFZEIYN,
 }

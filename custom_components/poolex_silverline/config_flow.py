@@ -224,7 +224,6 @@ class SilverlineConfigFlow(ConfigFlow, domain=DOMAIN):
         # at a glance whether the broadcast is a known Poolex heat pump or
         # some other Tuya device on the LAN that happened to broadcast at
         # the same time. Permissive by design — see _KNOWN_POOLEX_PRODUCT_KEYS.
-        product_key = discovery_info.get("product_key")
         _LOGGER.info(
             "Silverline discovery: device=%s host=%s productKey=%s known=%s",
             mask_device_id(device_id),

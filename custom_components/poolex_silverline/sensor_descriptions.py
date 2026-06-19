@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -35,7 +36,9 @@ from pysilverline import DeviceState
 from pysilverline.devices import MODEL_SILVERLINE_V34
 
 from ._faults import _decode_fault
-from .coordinator import SilverlineCoordinator
+
+if TYPE_CHECKING:
+    from .coordinator import SilverlineCoordinator
 
 
 @dataclass(frozen=True, kw_only=True)
