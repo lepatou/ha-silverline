@@ -32,6 +32,7 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from pysilverline import DeviceState
+from pysilverline.devices import MODEL_SILVERLINE_V34
 
 from ._faults import _decode_fault
 from .coordinator import SilverlineCoordinator
@@ -431,4 +432,4 @@ def descriptions_for_model(model_key: str) -> tuple[SilverlineSensorDescription,
     The v3.4 wfzeiyn firmware renumbers its DPs, so it gets a dedicated
     catalog; every other model uses the legacy numbering.
     """
-    return V34_SENSORS if model_key == "silverline_v34" else SENSORS
+    return V34_SENSORS if model_key == MODEL_SILVERLINE_V34 else SENSORS

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from pysilverline.devices import MODEL_SILVERLINE_V34
+
 DOMAIN: Final = "poolex_silverline"
 MANUFACTURER: Final = "Poolex"
 MODEL: Final = "Silverline Inverter (PC-SLP090N)"  # legacy fallback
@@ -50,7 +52,7 @@ DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
         display_name="Poolex Silverline FI 150",
         known_dps=None,  # live-detect; full DP set TBD once mapping is verified
     ),
-    "silverline_v34": DeviceProfile(
+    MODEL_SILVERLINE_V34: DeviceProfile(
         # Tuya v3.4 firmware (productKey wfzeiyn1ed3axxde). Distinct DP numbering
         # — fan on 114, suction/outlet swapped — handled by LAYOUT_V34_WFZEIYN.
         # Contributed by Martin Čarek (@olomouckyorel) from real hardware.

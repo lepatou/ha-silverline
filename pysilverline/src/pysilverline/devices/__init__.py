@@ -7,14 +7,22 @@ The registry is a plain dict built here from the per-model instances.
 
 from __future__ import annotations
 
+from typing import Final
+
 from .base import DpLayout as DpLayout
 from .standard import LAYOUT_STANDARD as LAYOUT_STANDARD
 from .v34_wfzeiyn import LAYOUT_V34_WFZEIYN as LAYOUT_V34_WFZEIYN
 
+#: Canonical model keys — the persisted ``CONF_MODEL`` values that map to a
+#: distinct layout. Defined here (the registry owns them) so the integration
+#: imports them instead of duplicating the literal strings across the boundary.
+MODEL_STANDARD: Final = "standard"
+MODEL_SILVERLINE_V34: Final = "silverline_v34"
+
 #: Canonical model key -> layout. Keys are the persisted ``CONF_MODEL`` values.
 _REGISTRY: dict[str, DpLayout] = {
-    "standard": LAYOUT_STANDARD,
-    "silverline_v34": LAYOUT_V34_WFZEIYN,
+    MODEL_STANDARD: LAYOUT_STANDARD,
+    MODEL_SILVERLINE_V34: LAYOUT_V34_WFZEIYN,
 }
 
 
@@ -40,10 +48,12 @@ def layout_for_model(model_key: str) -> DpLayout:
 
 
 __all__ = [
-    "DpLayout",
     "LAYOUT_BY_NAME",
     "LAYOUT_STANDARD",
     "LAYOUT_V34_WFZEIYN",
+    "MODEL_SILVERLINE_V34",
+    "MODEL_STANDARD",
+    "DpLayout",
     "get_layout",
     "layout_for_model",
 ]
