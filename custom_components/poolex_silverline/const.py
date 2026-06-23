@@ -37,9 +37,10 @@ DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
     ),
     "jetline_fi": DeviceProfile(
         display_name="Poolex JetLine Selection FI",
-        known_dps=frozenset(
-            {1, 2, 3, 4, 13, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111}
-        ),
+        # Some JetLine units expose only {1,2,3,4,13} (5-DP firmware) while
+        # others ship the full 101-111 diagnostic set. Live-detect on first
+        # poll so entities match what the actual firmware reports.
+        known_dps=None,
     ),
     "brustec_br80": DeviceProfile(
         display_name="Brustec BR-80",

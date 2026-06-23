@@ -3,6 +3,9 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?logo=homeassistant&logoColor=white)](https://www.home-assistant.io/)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange)](https://hacs.xyz/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Tests](https://github.com/christianreiss/ha-silverline/actions/workflows/tests.yaml/badge.svg)](https://github.com/christianreiss/ha-silverline/actions/workflows/tests.yaml)
+[![hassfest](https://github.com/christianreiss/ha-silverline/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/christianreiss/ha-silverline/actions/workflows/hassfest.yaml)
+[![HACS validation](https://github.com/christianreiss/ha-silverline/actions/workflows/hacs.yaml/badge.svg)](https://github.com/christianreiss/ha-silverline/actions/workflows/hacs.yaml)
 [![Last commit](https://img.shields.io/github/last-commit/christianreiss/ha-silverline)](https://github.com/christianreiss/ha-silverline/commits/main)
 
 Local-only Home Assistant integration for **Poolex Silverline FI** pool heat
