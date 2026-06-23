@@ -53,5 +53,8 @@ class SilverlineEntity(CoordinatorEntity[SilverlineCoordinator]):
                 translation_placeholders={"reason": str(err)},
             ) from err
         if self.coordinator.data is not None:
-            merged = self.coordinator.data.merge({str(k): v for k, v in dps.items()})
+            merged = self.coordinator.data.merge(
+                {str(k): v for k, v in dps.items()},
+                layout=self.coordinator.client.dp_layout,
+            )
             self.coordinator.async_set_updated_data(merged)

@@ -23,6 +23,7 @@ from custom_components.poolex_silverline.const import (
     DEFAULT_PORT,
     DOMAIN,
 )
+from pysilverline.layouts import LAYOUT_STANDARD
 
 DEVICE_ID = "bf12345678abcdefghijkl"
 LOCAL_KEY = "0123456789abcdef"
@@ -111,6 +112,7 @@ def mock_client(state_pool_running: DeviceState) -> MagicMock:
     client.connected = True
     client.state = state_pool_running
     client.detected_version = "3.3"
+    client.dp_layout = LAYOUT_STANDARD
     client.connect = AsyncMock(return_value=None)
     client.disconnect = AsyncMock(return_value=None)
     client.get_status = AsyncMock(return_value=state_pool_running)

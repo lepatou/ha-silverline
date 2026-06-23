@@ -131,6 +131,11 @@ class SilverlineClient:
         return self._state
 
     @property
+    def dp_layout(self) -> DpLayout:
+        """DP layout in use for this client (controls divisors and DP numbering)."""
+        return self._dp_layout
+
+    @property
     def detected_version(self) -> str | None:
         """Protocol version detected on the last successful connect, or None."""
         return self._detected_version

@@ -655,3 +655,50 @@ async def test_unknown_dp4_string_maps_to_hvac_action_none(
     state = hass.states.get(ENTITY_ID)
     assert state is not None
     assert state.attributes.get("hvac_action") is None
+
+
+async def test_pc_inv_120_divisor_preserved_after_mode_write(
+    hass: HomeAssistant,
+    mock_client_factory,
+    init_integration,
+) -> None:
+    """Regression: optimistic merge in _write_dps must use the client's dp_layout.
+
+    PC-INV-120V2 reports DP 3 in tenths of a degree (raw 277 = 27.7 °C).
+    Before the fix, entity.py called DeviceState.merge() with the default
+    LAYOUT_STANDARD (divisor=1), so after any write temp_current jumped to
+    277 until the next 30-second poll restored it.
+
+    Note: _attr_precision=PRECISION_WHOLE rounds 27.7→28 in HA state attributes,
+    so we check coordinator.data.temp_current directly (the unrounded source of
+    truth) rather than the displayed attribute.
+    """
+    from pysilverline.layouts import LAYOUT_PC_INV_120
+
+    # Wire the client to use the ÷10 layout (as __init__.py does for real entries)
+    mock_client_factory.dp_layout = LAYOUT_PC_INV_120
+
+    # Inject a state where DP 3 raw = 277 → 27.7 °C with the ÷10 layout
+    coordinator = init_integration.runtime_data
+    initial_state = coordinator.data.merge(
+        {"3": 277},
+        layout=LAYOUT_PC_INV_120,
+    )
+    coordinator.async_set_updated_data(initial_state)
+    await hass.async_block_till_done()
+
+    # Sanity: coordinator holds the scaled value before any write
+    assert coordinator.data.temp_current == pytest.approx(27.7)
+
+    # Trigger a mode change write — this is the scenario that previously corrupted
+    # temp_current by merging with LAYOUT_STANDARD (divisor=1), producing 277.
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.HEAT},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    # After the write, coordinator.data.temp_current must still be 27.7, not 277.
+    assert coordinator.data.temp_current == pytest.approx(27.7)
