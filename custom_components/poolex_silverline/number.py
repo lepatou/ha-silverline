@@ -114,9 +114,10 @@ class SilverlineNumber(SilverlineEntity, NumberEntity):
         slider usable until the next state push tells us otherwise.
         """
         state = self.coordinator.data
+        profile = self.coordinator.profile
         if state is None or not state.power:
-            return mode_temp_range(HVACMode.HEAT)
-        return mode_temp_range(derive_hvac_mode(state))
+            return mode_temp_range(HVACMode.HEAT, profile)
+        return mode_temp_range(derive_hvac_mode(state), profile)
 
     async def async_set_native_value(self, value: float) -> None:
         # DP 2 is integer Celsius; HA's NumberEntity already enforces our

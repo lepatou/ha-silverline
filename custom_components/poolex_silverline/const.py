@@ -28,12 +28,40 @@ class DeviceProfile:
     preset_to_heat_dp: dict[str, str] | None = None
     preset_to_cool_dp: dict[str, str] | None = None
     auto_dp: str | None = None  # DP-4 string to write for HEAT_COOL mode
+    # Per-model setpoint clamp bounds (None → fall back to global constants).
+    # Empirically determined by live sweep on real hardware; update only when
+    # confirmed on the specific model — do not assume from manuals (manuals
+    # give a single universal range, not per-mode clamping).
+    heat_temp_min: int | None = None
+    heat_temp_max: int | None = None
+    cool_temp_min: int | None = None
+    cool_temp_max: int | None = None
+    auto_temp_min: int | None = None
+    auto_temp_max: int | None = None
 
+
+# Setpoint clamp bounds confirmed live on PC-SLP090N by 21-value sweep (see
+# silverline-fe-specs.md §11).  All other models in the same Poolstar OEM
+# family share this firmware and are assumed to have identical per-mode
+# bounds.  Models with unverified bounds (Nulite, Other) leave these None so
+# they fall back to the global constants.
+_STD_HEAT_MIN: Final = 15
+_STD_HEAT_MAX: Final = 40
+_STD_COOL_MIN: Final = 8
+_STD_COOL_MAX: Final = 28
+_STD_AUTO_MIN: Final = 8
+_STD_AUTO_MAX: Final = 40
 
 DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
     "pc_slp090n": DeviceProfile(
         display_name="Poolex PC-SLP090N",
         known_dps=frozenset({1, 2, 3, 4, 13}),  # confirmed live
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     "jetline_fi": DeviceProfile(
         display_name="Poolex JetLine Selection FI",
@@ -41,22 +69,49 @@ DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
         # others ship the full 101-111 diagnostic set. Live-detect on first
         # poll so entities match what the actual firmware reports.
         known_dps=None,
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     "brustec_br80": DeviceProfile(
         display_name="Brustec BR-80",
         known_dps=None,
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     "phalen_calidi": DeviceProfile(
         display_name="Phalén Calidi XP",
         known_dps=None,
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     "nulite": DeviceProfile(
+        # House-heating firmware variant; per-mode clamp bounds unverified
+        # (cloud spec shows DP 2 range 8-60 for domestic hot water use).
+        # Leave bounds as None so the global defaults are used until confirmed.
         display_name="Nulite",
         known_dps=None,
     ),
     "fi_150": DeviceProfile(
         display_name="Poolex Silverline FI 150",
         known_dps=None,  # live-detect; full DP set TBD once mapping is verified
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     MODEL_PC_INV_120: DeviceProfile(
         # OEM Poolstar PC-INV-120V2 (Poolex Silverline FI 120 V2 sibling),
@@ -65,16 +120,26 @@ DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
         # (1, 2, 3, 4, 9 observed), so live-detect the entity set.
         # Uses a different DP-4 mode vocabulary than standard firmware:
         # heat/h_powerful/h_silent/cool/c_powerful/c_silent/auto/a_powerful/a_silent.
+        # Per-mode clamp bounds assumed same as standard family; unverified on
+        # this specific firmware variant.
         display_name="Poolex Silverline FI 120 V2 / PC-INV-120V2 (tenths °C)",
         known_dps=None,
         preset_to_heat_dp={"none": "heat", "boost": "h_powerful", "eco": "h_silent"},
         preset_to_cool_dp={"none": "cool", "boost": "c_powerful", "eco": "c_silent"},
         auto_dp="auto",
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     MODEL_SILVERLINE_V34: DeviceProfile(
         # Tuya v3.4 firmware (productKey wfzeiyn1ed3axxde). Distinct DP numbering
         # — fan on 114, suction/outlet swapped — handled by LAYOUT_V34_WFZEIYN.
         # Contributed by Martin Čarek (@olomouckyorel) from real hardware.
+        # Per-mode clamp bounds assumed same as standard family; unverified on
+        # this specific firmware variant.
         display_name="Poolex Silverline (Tuya v3.4 / wfzeiyn1ed3axxde)",
         known_dps=frozenset(
             {
@@ -102,6 +167,12 @@ DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
                 142,
             }
         ),
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
     ),
     "other": DeviceProfile(
         display_name="Other / Unknown",

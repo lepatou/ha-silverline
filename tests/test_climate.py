@@ -702,3 +702,96 @@ async def test_pc_inv_120_divisor_preserved_after_mode_write(
 
     # After the write, coordinator.data.temp_current must still be 27.7, not 277.
     assert coordinator.data.temp_current == pytest.approx(27.7)
+
+
+# ---------------------------------------------------------------------------
+# Setpoint clamping on mode switch
+# ---------------------------------------------------------------------------
+
+
+async def test_mode_switch_clamps_setpoint_above_cool_max(
+    hass: HomeAssistant, mock_client_factory, init_integration, monkeypatch
+) -> None:
+    """Switching from Heat (35 °C) to Cool must write 28 °C (Cool max) because
+    the carried-over setpoint exceeds the Cool upper bound."""
+    import custom_components.poolex_silverline.climate as climate_mod
+    from unittest.mock import AsyncMock
+
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Heat", "2": 35, "3": 30})
+    )
+    await hass.async_block_till_done()
+    mock_client_factory.set_multiple.reset_mock()
+
+    monkeypatch.setattr(climate_mod.asyncio, "sleep", AsyncMock())
+
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.COOL},
+        blocking=True,
+    )
+
+    calls = mock_client_factory.set_multiple.await_args_list
+    assert len(calls) == 2
+    assert calls[0].args[0] == {1: True, 4: "Cool"}
+    assert calls[1].args[0] == {2: 28}  # clamped to Cool max
+
+
+async def test_mode_switch_clamps_setpoint_below_heat_min(
+    hass: HomeAssistant, mock_client_factory, init_integration, monkeypatch
+) -> None:
+    """Switching from Cool (8 °C) to Heat must write 15 °C (Heat min)."""
+    import custom_components.poolex_silverline.climate as climate_mod
+    from unittest.mock import AsyncMock
+
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Cool", "2": 8, "3": 10})
+    )
+    await hass.async_block_till_done()
+    mock_client_factory.set_multiple.reset_mock()
+
+    monkeypatch.setattr(climate_mod.asyncio, "sleep", AsyncMock())
+
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.HEAT},
+        blocking=True,
+    )
+
+    calls = mock_client_factory.set_multiple.await_args_list
+    assert len(calls) == 2
+    assert calls[0].args[0] == {1: True, 4: "Heat"}
+    assert calls[1].args[0] == {2: 15}  # clamped to Heat min
+
+
+async def test_mode_switch_no_clamp_when_temp_in_new_range(
+    hass: HomeAssistant, mock_client_factory, init_integration, monkeypatch
+) -> None:
+    """Switching from Heat (25 °C) to Cool must NOT write a second setpoint
+    because 25 is within Cool range (8-28)."""
+    import custom_components.poolex_silverline.climate as climate_mod
+    from unittest.mock import AsyncMock
+
+    coordinator = init_integration.runtime_data
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "Heat", "2": 25, "3": 24})
+    )
+    await hass.async_block_till_done()
+    mock_client_factory.set_multiple.reset_mock()
+
+    monkeypatch.setattr(climate_mod.asyncio, "sleep", AsyncMock())
+
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.COOL},
+        blocking=True,
+    )
+
+    calls = mock_client_factory.set_multiple.await_args_list
+    assert len(calls) == 1  # only mode write, no clamp
+    assert calls[0].args[0] == {1: True, 4: "Cool"}

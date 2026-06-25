@@ -19,6 +19,7 @@ from .const import (
     COOL_PREFIX_TO_PRESET,
     COOL_TEMP_MAX,
     COOL_TEMP_MIN,
+    DeviceProfile,
     HEAT_PREFIX_TO_PRESET,
     HEAT_TEMP_MAX,
     HEAT_TEMP_MIN,
@@ -77,19 +78,28 @@ def derive_preset(state: DeviceState) -> str:
     return PRESET_NONE
 
 
-def mode_temp_range(mode: HVACMode | None) -> tuple[int, int]:
-    """Per-mode setpoint clamp (Heat 15-40, Cool 8-28, Auto 8-40).
+def mode_temp_range(
+    mode: HVACMode | None,
+    profile: DeviceProfile | None = None,
+) -> tuple[int, int]:
+    """Per-mode setpoint clamp bounds, optionally narrowed by device profile.
 
+    Falls back to global constants when the profile has no per-model override.
     Caller resolves their own OFF policy (climate uses its persisted
     _last_direction; number falls back to Heat) and passes in the
-    already-resolved mode. Unknown modes also fall back to the Heat
-    range — the most common operating mode for a pool heat pump.
+    already-resolved mode. Unknown modes fall back to the Heat range.
     """
     if mode == HVACMode.COOL:
-        return COOL_TEMP_MIN, COOL_TEMP_MAX
+        lo = profile.cool_temp_min if profile and profile.cool_temp_min is not None else COOL_TEMP_MIN
+        hi = profile.cool_temp_max if profile and profile.cool_temp_max is not None else COOL_TEMP_MAX
+        return lo, hi
     if mode == HVACMode.HEAT_COOL:
-        return AUTO_TEMP_MIN, AUTO_TEMP_MAX
-    return HEAT_TEMP_MIN, HEAT_TEMP_MAX
+        lo = profile.auto_temp_min if profile and profile.auto_temp_min is not None else AUTO_TEMP_MIN
+        hi = profile.auto_temp_max if profile and profile.auto_temp_max is not None else AUTO_TEMP_MAX
+        return lo, hi
+    lo = profile.heat_temp_min if profile and profile.heat_temp_min is not None else HEAT_TEMP_MIN
+    hi = profile.heat_temp_max if profile and profile.heat_temp_max is not None else HEAT_TEMP_MAX
+    return lo, hi
 
 
 def compute_hvac_action(state: DeviceState) -> HVACAction | None:

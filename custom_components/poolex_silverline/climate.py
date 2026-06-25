@@ -171,7 +171,7 @@ class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
         mode = self.hvac_mode
         if mode == HVACMode.OFF:
             mode = self._last_direction
-        return mode_temp_range(mode)
+        return mode_temp_range(mode, self.coordinator.profile)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if hvac_mode == HVACMode.OFF:
@@ -193,6 +193,14 @@ class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
                 translation_placeholders={"mode": str(hvac_mode)},
             )
 
+        # Capture setpoint before mode write so we can clamp it to the new
+        # mode's bounds after the transition settle.  Devices reject (or
+        # silently clip) out-of-range writes; HA's UI also shows a stale value
+        # if we don't correct it ourselves.
+        current_set: int | None = None
+        if (state := self.coordinator.data) is not None and state.temp_set is not None:
+            current_set = int(round(float(state.temp_set)))
+
         await self._write_dps(
             {tuya_const.DP_POWER: True, tuya_const.DP_MODE: mode_string}
         )
@@ -200,6 +208,14 @@ class SilverlineClimate(SilverlineEntity, ClimateEntity, RestoreEntity):
         # restore-push for that mode's last temp ~430-500 ms later, which
         # would overwrite any setpoint a chained service call writes too soon.
         await asyncio.sleep(MODE_TRANSITION_SETTLE)
+
+        # Clamp the setpoint if the carried-over value exceeds the new mode's
+        # bounds (e.g. Heat at 35 °C → Cool, where Cool max is 28 °C).
+        if current_set is not None:
+            low, high = mode_temp_range(hvac_mode, self.coordinator.profile)
+            clamped = max(low, min(high, current_set))
+            if clamped != current_set:
+                await self._write_dps({tuya_const.DP_TEMP_SET: clamped})
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         if preset_mode not in PRESETS:
