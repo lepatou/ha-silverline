@@ -369,3 +369,85 @@ async def test_operating_mode_select_rejects_unknown_option_directly(
     entity = _opmode_entity(hass)
     with pytest.raises(ServiceValidationError):
         await entity.async_select_option("invalid")
+
+
+# ---------------------------------------------------------------------------
+# Model-specific DP-4 vocabulary: coordinator.profile must reach the wire
+# ---------------------------------------------------------------------------
+
+
+async def test_pc_inv_120_model_threads_profile_to_dp4_writes(
+    hass: HomeAssistant, mock_client_factory, monkeypatch
+) -> None:
+    """End-to-end mirror of the climate guard: with CONF_MODEL set to
+    PC-INV-120, both selects must write the model's DP-4 vocabulary
+    ('h_powerful', lowercase 'auto') instead of the global strings.
+
+    The other select tests run with CONF_MODEL unset (profile is None), so a
+    regression passing None instead of self.coordinator.profile into
+    resolve_*() would leave them green while PC-INV-120 users got 'BoostHeat'/
+    'Auto' — which the device silently ignores. This test fails under exactly
+    that regression.
+    """
+    from unittest.mock import AsyncMock
+
+    from homeassistant.components.select import (
+        ATTR_OPTION,
+        DOMAIN as SELECT_DOMAIN,
+        SERVICE_SELECT_OPTION,
+    )
+    from homeassistant.const import ATTR_ENTITY_ID, CONF_HOST, CONF_PORT
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    import custom_components.poolex_silverline.select as select_mod
+    from custom_components.poolex_silverline.const import (
+        CONF_DEVICE_ID,
+        CONF_LOCAL_KEY,
+        CONF_MODEL,
+        DEFAULT_PORT,
+        DOMAIN,
+    )
+    from pysilverline.devices import MODEL_PC_INV_120
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="bf12345678abcdefghijkl",
+        data={
+            CONF_HOST: "10.0.0.50",
+            CONF_PORT: DEFAULT_PORT,
+            CONF_DEVICE_ID: "bf12345678abcdefghijkl",
+            CONF_LOCAL_KEY: "0123456789abcdef",
+            CONF_MODEL: MODEL_PC_INV_120,
+        },
+        version=1,
+        minor_version=3,
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    monkeypatch.setattr(select_mod.asyncio, "sleep", AsyncMock())
+
+    coordinator = entry.runtime_data
+    # PC-INV-120 firmware reports the lowercase 'heat' enum on DP 4.
+    coordinator.async_set_updated_data(DeviceState.from_dps({"1": True, "4": "heat"}))
+    await hass.async_block_till_done()
+
+    # Preset boost while heating → PC-INV-120 'h_powerful', not 'BoostHeat'.
+    await hass.services.async_call(
+        SELECT_DOMAIN,
+        SERVICE_SELECT_OPTION,
+        {ATTR_ENTITY_ID: PRESET_ENTITY, ATTR_OPTION: "boost"},
+        blocking=True,
+    )
+    mock_client_factory.set_multiple.assert_awaited_with({4: "h_powerful"})
+
+    # Operating mode heat_cool → lowercase 'auto', not 'Auto'.
+    mock_client_factory.set_multiple.reset_mock()
+    await hass.services.async_call(
+        SELECT_DOMAIN,
+        SERVICE_SELECT_OPTION,
+        {ATTR_ENTITY_ID: OPMODE_ENTITY, ATTR_OPTION: "heat_cool"},
+        blocking=True,
+    )
+    mock_client_factory.set_multiple.assert_awaited_with({1: True, 4: "auto"})

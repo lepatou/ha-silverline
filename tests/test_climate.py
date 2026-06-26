@@ -795,3 +795,84 @@ async def test_mode_switch_no_clamp_when_temp_in_new_range(
     calls = mock_client_factory.set_multiple.await_args_list
     assert len(calls) == 1  # only mode write, no clamp
     assert calls[0].args[0] == {1: True, 4: "Cool"}
+
+
+# ---------------------------------------------------------------------------
+# Model-specific DP-4 vocabulary: coordinator.profile must reach the wire
+# ---------------------------------------------------------------------------
+
+
+async def test_pc_inv_120_model_threads_profile_to_dp4_writes(
+    hass: HomeAssistant, mock_client_factory, monkeypatch
+) -> None:
+    """End-to-end: with CONF_MODEL set to PC-INV-120, the model's DP-4
+    vocabulary ('h_powerful', lowercase 'auto') must reach the wire — not
+    the global strings ('BoostHeat'/'Auto').
+
+    Every other climate test runs with CONF_MODEL unset (profile is None),
+    so they'd stay green even if a regression passed None instead of
+    self.coordinator.profile into resolve_*(). This locks the threading down:
+    resolve_heat_map(None) yields 'BoostHeat' and resolve_auto_dp(None) yields
+    'Auto', so asserting the lowercase PC-INV-120 strings fails under exactly
+    that regression (the device silently ignores unknown strings otherwise).
+    """
+    from unittest.mock import AsyncMock
+
+    from homeassistant.const import CONF_HOST, CONF_PORT
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    import custom_components.poolex_silverline.climate as climate_mod
+    from custom_components.poolex_silverline.const import (
+        CONF_DEVICE_ID,
+        CONF_LOCAL_KEY,
+        CONF_MODEL,
+        DEFAULT_PORT,
+        DOMAIN,
+    )
+    from pysilverline.devices import MODEL_PC_INV_120
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="bf12345678abcdefghijkl",
+        data={
+            CONF_HOST: "10.0.0.50",
+            CONF_PORT: DEFAULT_PORT,
+            CONF_DEVICE_ID: "bf12345678abcdefghijkl",
+            CONF_LOCAL_KEY: "0123456789abcdef",
+            CONF_MODEL: MODEL_PC_INV_120,
+        },
+        version=1,
+        minor_version=3,
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    monkeypatch.setattr(climate_mod.asyncio, "sleep", AsyncMock())
+
+    coordinator = entry.runtime_data
+    # PC-INV-120 firmware reports the lowercase 'heat' enum on DP 4.
+    coordinator.async_set_updated_data(
+        DeviceState.from_dps({"1": True, "4": "heat", "2": 28, "3": 26})
+    )
+    await hass.async_block_till_done()
+
+    # Preset boost while heating → PC-INV-120 'h_powerful', not 'BoostHeat'.
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_PRESET_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_PRESET_MODE: "boost"},
+        blocking=True,
+    )
+    mock_client_factory.set_multiple.assert_awaited_with({4: "h_powerful"})
+
+    # HEAT_COOL → lowercase 'auto', not 'Auto'. Setpoint 28 stays inside the
+    # auto range (8-40), so no clamp write trails the mode write.
+    mock_client_factory.set_multiple.reset_mock()
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        SERVICE_SET_HVAC_MODE,
+        {ATTR_ENTITY_ID: ENTITY_ID, ATTR_HVAC_MODE: HVACMode.HEAT_COOL},
+        blocking=True,
+    )
+    mock_client_factory.set_multiple.assert_awaited_with({1: True, 4: "auto"})

@@ -283,19 +283,43 @@ async def test_discovery_rewrites_host_only_on_verified_response(
     assert mock_client_factory.disconnect.called
 
 
+@pytest.mark.parametrize(
+    ("inject_attr", "exc"),
+    [
+        # Responder is reachable but never proves it holds our local_key.
+        ("get_status", CannotConnect("spoof")),
+        # connect() failure — for v3.4/v3.5 the session-key handshake
+        # inside connect() IS the auth check, so a rotated/invalid
+        # local_key surfaces here as InvalidAuth.
+        ("connect", InvalidAuth("rotated key")),
+        # A malformed handshake payload bubbles up as ValueError (the
+        # third member of the verifier's caught tuple).
+        ("connect", ValueError("garbage frame")),
+    ],
+)
 async def test_discovery_ignores_unverified_host(
-    hass: HomeAssistant, mock_client_factory, config_entry: MockConfigEntry
+    hass: HomeAssistant,
+    mock_client_factory,
+    config_entry: MockConfigEntry,
+    inject_attr: str,
+    exc: Exception,
 ) -> None:
     """Existing entry, broadcast announces a hostile IP that doesn't
     answer with our local_key → CONF_HOST stays put and the flow aborts
-    with `unverified_host`."""
+    with `unverified_host`.
+
+    The verifier wraps both connect() (the v3.4/v3.5 session-key
+    handshake) and get_status() in one try; a failure at either stage —
+    via any member of the caught (CannotConnect, InvalidAuth, ValueError)
+    tuple — must abort without rewriting the stored host.
+    """
     from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY
 
     config_entry.add_to_hass(hass)
     assert config_entry.data[CONF_HOST] == HOST
 
     hostile_ip = "10.0.0.66"
-    mock_client_factory.get_status.side_effect = CannotConnect("spoof")
+    getattr(mock_client_factory, inject_attr).side_effect = exc
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_INTEGRATION_DISCOVERY},
