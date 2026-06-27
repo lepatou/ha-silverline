@@ -25,6 +25,10 @@ from .frame import _MAX_FRAME_SIZE, Frame
 _35_HEADER_FMT = ">IHIII"  # prefix(4) unknown(2) seq(4) cmd(4) length(4)
 _35_HEADER_SIZE = struct.calcsize(_35_HEADER_FMT)  # 18 bytes
 
+# Some firmware prepends a Tuya "version header" to the JSON body of a push:
+# 3 version bytes (b"3.5") + 12 reserved bytes = 15. See split_request_payload.
+_35_VERSION_HEADER_SIZE = 15
+
 
 class Frame35Codec:
     """Encodes and decodes Tuya local protocol v3.5 (6699 / AES-GCM) frames.
@@ -143,14 +147,40 @@ class Frame35Codec:
 
     @staticmethod
     def split_request_payload(payload: bytes) -> bytes:
-        """Strip an optional 4-byte retcode from a push frame payload.
+        """Strip a retcode and/or Tuya version header from a push frame payload.
 
-        Payload is already decrypted; strip retcode if the first byte is not
-        the start of a JSON object.
+        The payload is already decrypted. Three shapes are seen on STATUS
+        (0x08) pushes:
+
+        * bare ``{...}`` JSON;
+        * ``[retcode:4]{...}`` — a 4-byte return code then JSON;
+        * ``[retcode:4]["3.x" + 12 reserved : 15]{...}`` — a 4-byte retcode,
+          then a 15-byte Tuya version header, then JSON. Observed on JetLine
+          Selection FI firmware (productKey 3bhylhz5zhogklel, v3.5), where the
+          JSON is the ``{"protocol":4,"t":...,"data":{"dps":{...}}}`` envelope
+          that ``_unwrap_dps`` already understands.
+
+        Peel whatever framing precedes the JSON so ``decrypt_body`` sees a clean
+        object; return the payload unchanged if nothing matches (the caller
+        then logs and drops it).
         """
-        if len(payload) > 4 and payload[0:1] != b"{" and payload[4:5] == b"{":
-            return payload[4:]
-        return payload
+        body = payload
+        # Version header with or without a leading 4-byte retcode: validated by
+        # confirming a JSON object opens immediately after the 15-byte header,
+        # so a future firmware with different framing degrades to the drop path
+        # rather than mis-slicing.
+        vh = _35_VERSION_HEADER_SIZE
+        for offset in (0, 4):
+            if (
+                len(body) > offset + vh
+                and body[offset : offset + 2] == b"3."
+                and body[offset + vh : offset + vh + 1] == b"{"
+            ):
+                return body[offset + vh :]
+        # Legacy: bare JSON behind an optional 4-byte retcode.
+        if len(body) > 4 and body[0:1] != b"{" and body[4:5] == b"{":
+            return body[4:]
+        return body
 
     @staticmethod
     def decrypt_body(body: bytes) -> dict[str, Any]:

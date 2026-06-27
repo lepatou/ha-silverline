@@ -8,7 +8,9 @@ import struct
 import pytest
 
 from pysilverline import const
+from pysilverline.client import _unwrap_dps
 from pysilverline.exceptions import IncompleteFrame, InvalidAuth, ProtocolError
+from pysilverline.models import DeviceState
 from pysilverline.protocol import (
     Frame35Codec,
     aes_gcm_decrypt,
@@ -270,6 +272,60 @@ def test_frame35_split_request_payload_strips_retcode_prefix() -> None:
 def test_frame35_split_request_payload_no_strip_when_starts_with_brace() -> None:
     payload = b'{"dps":{}}'
     assert Frame35Codec.split_request_payload(payload) == payload
+
+
+# JetLine Selection FI (productKey 3bhylhz5zhogklel) v3.5 STATUS pushes arrive,
+# after GCM decryption, as a 4-byte zero retcode + a 15-byte Tuya version header
+# ("3.5" + 12 reserved) + a protocol-4 envelope. Captured on the HA community
+# forum (topic 1011340, post #18). split_request_payload must peel both layers.
+
+
+def _jetline_fi_status_body(dps: dict[str, int]) -> bytes:
+    """Decrypted STATUS-push body mirroring the forum capture's framing."""
+    retcode = b"\x00\x00\x00\x00"
+    # "3.5" + the exact 12 reserved bytes seen on the wire (a counter + const).
+    version_header = b"3.5" + bytes.fromhex("000000000000f93000000001")
+    envelope = {"protocol": 4, "t": 1782549444, "data": {"dps": dps}}
+    body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+    return retcode + version_header + body
+
+
+def test_frame35_split_request_payload_strips_version_header_with_retcode() -> None:
+    body = _jetline_fi_status_body({"104": 74})
+    stripped = Frame35Codec.split_request_payload(body)
+    assert stripped.startswith(b'{"protocol":4')
+    assert Frame35Codec.decrypt_body(stripped)["data"]["dps"] == {"104": 74}
+
+
+def test_frame35_split_request_payload_strips_version_header_without_retcode() -> None:
+    # Defensive: same header with no leading retcode peels at offset 0.
+    body = b"3.5" + bytes.fromhex("000000000000f93000000001") + b'{"dps":{"2":28}}'
+    assert Frame35Codec.split_request_payload(body) == b'{"dps":{"2":28}}'
+
+
+def test_frame35_split_request_payload_keeps_unrecognized_framing() -> None:
+    # Neither a version header nor a retcode+JSON shape: returned unchanged so
+    # the caller logs and drops it rather than mis-slicing.
+    payload = b"\x00\x01\x02\x03\x04\x05\x06"
+    assert Frame35Codec.split_request_payload(payload) == payload
+
+
+def test_jetline_fi_status_push_flows_into_device_state() -> None:
+    # Full pipeline: split_request_payload -> decrypt_body -> _unwrap_dps ->
+    # DeviceState. Proves the protocol-4 "data.dps" envelope behind the version
+    # header lands real telemetry, which the old code dropped as undecryptable.
+    body = _jetline_fi_status_body(
+        {"104": 74, "103": 27, "102": 32, "111": 242, "120": 215}
+    )
+    decoded = Frame35Codec.decrypt_body(Frame35Codec.split_request_payload(body))
+    dps = _unwrap_dps(decoded)
+    assert dps == {"104": 74, "103": 27, "102": 32, "111": 242, "120": 215}
+    state = DeviceState.from_dps(dps)
+    assert state.discharge_temp == 74  # DP 104
+    assert state.pool_temp == 27  # DP 103
+    assert state.ambient_temp == 32  # DP 102
+    assert state.water_pump is True  # DP 111 (non-zero int)
+    assert state.total_hours == 215  # DP 120
 
 
 def test_frame35_decrypt_body_parses_json() -> None:
