@@ -44,8 +44,10 @@ pumps (Tuya v3.3 / v3.4 / v3.5) and OEM siblings. Connects directly over LAN —
 ## Supported devices
 
 The Tuya schema is shared across the Poolex Silverline FI family and several
-OEM siblings; the integration is expected to work with all of them, though
-only the PC-SLP090N has been verified directly against live hardware.
+OEM siblings; the integration is expected to work with all of them. Three
+firmware generations have been verified directly against live hardware: the
+PC-SLP090N (v3.3), a v3.4 Poolex Silverline, and a v3.5 JetLine FI with the new
+WiFi control board (issue #7).
 
 | Model | Protocol | Climate (off/heat/cool/auto) | Presets (boost/silent) | Diagnostics (DP 101–111) | Fault sensors | Status |
 |---|---|---|---|---|---|---|
@@ -53,6 +55,7 @@ only the PC-SLP090N has been verified directly against live hardware.
 | Poolex Silverline FI 120 / 180 / 200 | v3.3 | ✅ | ✅ | ❓ firmware-dependent | ✅ | 🔵 inferred |
 | Poolex Silverline FI 120 V2 / PC-INV-120V2 | v3.3 | ✅ | ✅ | ❌ none (5-DP, tenths °C) | ❌ (DP 9, not 13) | 🟡 user-reported |
 | Poolex JetLine Selection FI | v3.3 | ✅ | ✅ | ❓ firmware-dependent (some units 5-DP) | ✅ | 🟡 user-reported |
+| Poolex JetLine FI (new v3.5 WiFi control board) | v3.5 | ✅ | ✅ | ✅ full | ✅ | 🟢 live-verified |
 | Brustec BR series | v3.3 / v3.5 | ✅ | ✅ | ✅ full | ✅ | 🔵 inferred |
 | Steinbach Silent Mini | v3.3 / v3.5 | ✅ | ✅ | ✅ full | ✅ | 🔵 inferred |
 | Phalén Calidi XP | v3.3 / v3.5 | ✅ | ✅ | ✅ full | ✅ | 🔵 inferred |
@@ -65,11 +68,21 @@ tested directly) · 🟡 user-reported (confirmed from a reporter's device, not
 in-house) · ⚪ unknown · ✅ present · ❌ absent · ❓ firmware-dependent
 
 - **The protocol version is auto-detected** (probed in order v3.5 → v3.4 →
-  v3.3) and can be pinned on the config entry. v3.5 is implemented faithfully
-  to the spec (verified against the TinyTuya source) but **not yet against real
-  v3.5 hardware**. v3.4 *has* been validated against real hardware — see below.
-  The v3.4 probe is also field-tested as benign against the live v3.3 device
-  (it falls back cleanly without disturbing the pump).
+  v3.3) and can be pinned on the config entry. v3.5 — including local control
+  writes — is now **live-verified against real v3.5 hardware** (see below);
+  v3.4 is likewise validated against real hardware. The v3.4 probe is also
+  field-tested as benign against the live v3.3 device (it falls back cleanly
+  without disturbing the pump).
+- **v3.5 local control is live-verified, and needs integration 0.9.14 or
+  later.** Confirmed on a real Poolex JetLine FI with the new WiFi control
+  board (productKey `b4zr9ugt1q8xn9af`), contributed by
+  [@Paulus385](https://github.com/Paulus385) (issue #7). These newer boards
+  require a 15-byte Tuya version header inside the encrypted payload on control
+  writes (reads and the handshake are header-less); pysilverline < 0.4.9 /
+  integration < 0.9.14 omitted it, so the board accepted local *reads* but
+  silently rejected every local *write* with `retcode=0x01000000` — the symptom
+  was "turns on from HA, then reverts to OFF after a few seconds." Update to
+  0.9.14+ if you see that on a v3.5 unit.
 - **v3.4 support is live-verified** on a real Poolex Silverline (productKey
   `wfzeiyn1ed3axxde`, 2026 firmware), contributed by Martin Čarek
   ([@olomouckyorel](https://github.com/olomouckyorel), PR #3). That firmware
@@ -339,6 +352,22 @@ suffix becomes heat/cool. All seven modes are accessible.
 - [`tuya-local`](https://github.com/make-all/tuya-local) — community Tuya
   integration with extensive device YAMLs; the source for several of the
   DP mappings used here.
+
+## Acknowledgments
+
+Hardware verification on devices the maintainer doesn't own is what keeps this
+integration honest — huge thanks to the contributors who ran the tests:
+
+- **[@Paulus385](https://github.com/Paulus385)** — verified v3.5 local control
+  on a JetLine FI with the new WiFi control board, and whose Wireshark capture
+  and tinytuya cross-check root-caused the missing-version-header write bug
+  (issue #7).
+- **Martin Čarek ([@olomouckyorel](https://github.com/olomouckyorel))** —
+  contributed and live-verified v3.4 support on real Poolex Silverline hardware
+  (PR #3).
+- **[@trothe](https://github.com/trothe)** — reported the minimal 5-DP JetLine
+  Selection FI variant and the compressor-sensor false positive, with an `Er 03`
+  no-flow cross-check (issue #6).
 
 ## Development
 
