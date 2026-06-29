@@ -222,6 +222,55 @@ the mode change is applied first so your target lands under the new mode.
 - This is a device limitation, not an integration bug. Switch to
   Heat or Cool first; the preset will then apply.
 
+## Reporting a problem
+
+`pysilverline` ships a diagnostic tool that gathers everything a maintainer
+needs — the protocol probe ladder, the full DP map, and (optionally) the
+control-write result — into one paste-ready report, with your device id, local
+key and host/IP redacted. It runs without Home Assistant, so it also helps when
+the integration won't connect at all.
+
+Run it with **no arguments** and it walks you through everything — scanning your
+network, letting you pick the heat pump, and asking for the local key:
+
+```bash
+pip install pysilverline
+pysilverline diagnose
+```
+
+```text
+Scanning for devices (6s)…
+Devices found on your network:
+  [1] 192.168.1.42  (productKey 3bhylhz5zhogklel, v3.3, id bf90…)
+Pick a number, or press Enter to type the details manually: 1
+Local key (16 characters): ••••••••••••••••
+Protocol version (auto / 3.3 / 3.4 / 3.5) [auto]:
+Also test the control path? … [y/N]: n
+```
+
+It then prints the report and offers to save it. Paste the output into a
+[bug report](https://github.com/christianreiss/ha-silverline/issues/new/choose).
+
+- Your **local key** is in Home Assistant under *Settings → Devices & Services →
+  Poolex Silverline → ⋮ → Download diagnostics* (or run `python -m tinytuya wizard`).
+- Say **yes** to the control-path test only if you want it: it writes the
+  setpoint (DP 2) back to its *current* value, so it changes nothing, but it
+  reveals whether local writes are accepted (the signal behind issue #7).
+- Already running Home Assistant? *Download diagnostics* on the device page
+  carries the same information.
+
+<details>
+<summary>Scripted / non-interactive use</summary>
+
+Pass all three connection details (plus any options) as flags to skip the
+prompts — handy for scripts, or when you already know them:
+
+```bash
+pysilverline diagnose --host <device-ip> --device-id <id> --local-key <key> \
+    [--probe-write] [--version 3.5] [--output report.md] [--no-redact]
+```
+</details>
+
 ## Use cases
 
 - **Seasonal pool warmup.** Set `hvac_mode: heat` with the `boost`

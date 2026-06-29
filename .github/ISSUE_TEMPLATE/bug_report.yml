@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a problem with the integration or a device that won't work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The single most useful thing you can attach is a
+        **diagnostic report**. It captures the protocol probe, the full DP map,
+        and (optionally) the control-write result — with your device id, local
+        key and host/IP redacted.
+
+        Run it from any machine on the same network as the heat pump — with no
+        arguments it scans for your device, lets you pick it, and asks for the
+        local key:
+
+        ```bash
+        pip install pysilverline
+        pysilverline diagnose
+        ```
+
+        Your local key is in Home Assistant under *Settings → Devices &
+        Services → Poolex Silverline → ⋮ → Download diagnostics*. Add
+        `--probe-write` to also test the control path (it writes the setpoint
+        back to its current value, so it does not change anything).
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic report
+      description: Paste the full output of `python -m pysilverline diagnose` (secrets are already redacted).
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.6.4"
+    validations:
+      required: false
+  - type: input
+    id: integration-version
+    attributes:
+      label: Integration version
+      placeholder: "0.9.15"
+    validations:
+      required: false
