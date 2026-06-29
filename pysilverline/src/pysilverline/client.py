@@ -332,26 +332,15 @@ class SilverlineClient:
         if is_invalid_auth_retcode(retcode):
             raise InvalidAuth(f"device rejected CONTROL retcode={retcode}")
         if retcode not in (None, 0):
-            if self._detected_version == "3.5":
-                # A leading 0x01000000 on a v3.5 CONTROL_NEW ack was the device
-                # REJECTING a header-less write (issue #7) — root-caused to the
-                # missing 15-byte version header, now prepended in
-                # ``Frame35Codec.encode``, so a correct write should return
-                # retcode 0. We still accept (not raise on) a non-zero code here:
-                # the shape of a *successful* ack on this firmware is not yet
-                # confirmed on hardware, and a success ack carrying a version
-                # header would make ``split_response_payload`` read a bogus
-                # non-zero retcode. Tightening to strict is deferred until the
-                # success-ack shape is confirmed. TinyTuya likewise never fails a
-                # write on this retcode. v3.3 (0x07) and v3.4 (0x0d, confirmed on
-                # real wfzeiyn silicon) return retcode 0 and stay strict.
-                _LOGGER.debug(
-                    "v3.5 CONTROL_NEW ack carried retcode=0x%08x; accepting "
-                    "(write-ack retcode is not a reliable failure signal)",
-                    retcode,
-                )
-            else:
-                raise SilverlineError(f"CONTROL failed retcode=0x{retcode:08x}")
+            # Any non-zero CONTROL ack is a device-side rejection, v3.5 included.
+            # The leading 0x01000000 once tolerated on the v3.5 path was the board
+            # rejecting a header-less write (issue #7), now fixed by prepending
+            # the 15-byte version header in ``Frame35Codec.encode``. A successful
+            # v3.5 write returns retcode 0/None — confirmed on real hardware
+            # (Paulus385, issue #7: a write that physically powered the unit on
+            # produced no non-zero ack at all), so raising here surfaces genuine
+            # rejections without risking a false negative on a good write.
+            raise SilverlineError(f"CONTROL failed retcode=0x{retcode:08x}")
         # The device usually echoes the new state via a push frame within
         # ~200ms; merge optimistically so callers see the updated DPs even if
         # they query before the push arrives.

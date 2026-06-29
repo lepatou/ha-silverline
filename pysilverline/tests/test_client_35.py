@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from pysilverline import SilverlineClient, const
-from pysilverline.exceptions import CannotConnect
+from pysilverline.exceptions import CannotConnect, SilverlineError
 from pysilverline.protocol import (
     Frame35Codec,
     aes_gcm_encrypt,
@@ -230,15 +230,17 @@ def _dp_query_handler(dps: dict[str, Any]) -> Any:
     return handler
 
 
-def _control_new_handler(ack: bytes = b"\x01\x00\x00\x00") -> Any:
+def _control_new_handler(ack: bytes = b"\x00\x00\x00\x00") -> Any:
     def handler(seq: int, body: dict[str, Any], session_key: bytes) -> bytes:
         # Real v3.5 firmware accepts control writes on CONTROL_NEW (0x0d) wrapped
         # in a protocol-5 envelope (``data.dps``), not the v3.3 CONTROL (0x07).
-        # The default ack mirrors the device in issue #7 (productKey
-        # b4zr9ugt1q8xn9af): a 4-byte 01 00 00 00 that the codec peels as a
-        # 0x01000000 "retcode" even though the write applied. A previous version
-        # of this test answered with a 4-byte ZERO retcode, which was circular —
-        # it only proved the client accepts the exact ack the mock chose to send.
+        # The default ack is a 4-byte ZERO retcode — confirmed on real hardware
+        # to be what a *successful* v3.5 write returns (Paulus385, issue #7: a
+        # write that physically powered the unit on produced no non-zero ack).
+        # This is no longer circular: 0.9.13 once acked 0x01000000 because the
+        # write was being REJECTED for a missing version header; with that fixed,
+        # the success ack is retcode 0. Pass ack=b"\x01\x00\x00\x00" to model a
+        # device-side rejection (which must now raise).
         return _encode_35(seq, const.CMD_CONTROL_NEW, ack, session_key)
 
     return handler
@@ -371,11 +373,10 @@ async def test_v35_set_multiple_round_trip() -> None:
     the v3.3 0x07 CONTROL. A device that only handles 0x0d leaves a 0x07 write
     unanswered → ``timeout waiting for cmd 0x07`` (forum report, v3.5 pump).
 
-    The mock answers CONTROL_NEW with the real device's ``01 00 00 00`` ack
-    (issue #7), which the codec peels as a 0x01000000 "retcode". This call must
-    therefore NOT raise: a non-zero retcode on a v3.5 control-ack is not a
-    failure signal (see ``set_multiple``). A green run guards the intended wire
-    behaviour but does not substitute for validation on a real v3.5 device.
+    The mock answers CONTROL_NEW with a zero retcode — what a successful v3.5
+    write returns on real hardware (Paulus385, issue #7, integration 0.9.14:
+    the write physically powered the unit on with no non-zero ack). The call
+    must succeed and optimistically merge the new DPs.
     """
     async with FakeTuya35Server() as server:
         server.handlers[const.CMD_CONTROL_NEW] = _control_new_handler()
@@ -399,6 +400,36 @@ async def test_v35_set_multiple_round_trip() -> None:
             # Optimistic local merge reflects the write.
             assert client.state.temp_set == 28
             assert client.state.power is True
+        finally:
+            await client.disconnect()
+
+
+async def test_v35_set_multiple_raises_on_nonzero_retcode() -> None:
+    """A v3.5 CONTROL_NEW ack with a non-zero retcode is a device rejection.
+
+    Before the version-header fix (issue #7) real firmware rejected header-less
+    writes with 0x01000000; that path was tolerated as "benign". Now that a
+    successful write is known to return retcode 0 on hardware, a non-zero ack is
+    a genuine rejection and must surface as an error instead of a phantom ON.
+    """
+    async with FakeTuya35Server() as server:
+        server.handlers[const.CMD_CONTROL_NEW] = _control_new_handler(
+            ack=b"\x01\x00\x00\x00"
+        )
+        client = SilverlineClient(
+            host="127.0.0.1",
+            port=server.port,
+            device_id=DEVICE_ID,
+            local_key=KEY,
+            protocol_version="3.5",
+            request_timeout=2.0,
+        )
+        await client.connect()
+        try:
+            with pytest.raises(SilverlineError):
+                await client.set_multiple({const.DP_POWER: True})
+            # A rejected write must NOT optimistically merge a phantom state.
+            assert client.state.power is not True
         finally:
             await client.disconnect()
 
