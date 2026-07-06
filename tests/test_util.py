@@ -101,6 +101,31 @@ def test_derive_preset_pc_inv_120_cool_presets() -> None:
     )
 
 
+# --- Steinbach Silent Mini mode vocabulary (issue #10) ---
+
+
+def test_derive_hvac_mode_steinbach_heating_cooling_strings() -> None:
+    """Full-word 'Heating'/'Cooling' (productKey xiusqryqukyqkq3w) decode to
+    HEAT/COOL instead of falling through to None (→ HA 'unknown' state)."""
+    state = DeviceState.from_dps({"1": True, "4": "Heating"})
+    assert derive_hvac_mode(state) is HVACMode.HEAT
+    state = DeviceState.from_dps({"1": True, "4": "Cooling"})
+    assert derive_hvac_mode(state) is HVACMode.COOL
+
+
+def test_derive_preset_steinbach_heating_cooling_strings() -> None:
+    """'Heating'/'Cooling' both resolve to the 'none' preset — this
+    firmware's boost/eco variants are unconfirmed."""
+    assert (
+        derive_preset(DeviceState.from_dps({"1": True, "4": "Heating"}))
+        == PRESET_NONE
+    )
+    assert (
+        derive_preset(DeviceState.from_dps({"1": True, "4": "Cooling"}))
+        == PRESET_NONE
+    )
+
+
 def test_derive_hvac_mode_off_overrides_mode_string() -> None:
     """DP 1 = False → HVACMode.OFF regardless of what DP 4 carries."""
     state = DeviceState.from_dps({"1": False, "4": "heat"})
@@ -157,6 +182,15 @@ def test_resolve_cool_map_uses_profile_override() -> None:
         "boost": "c_powerful",
         "eco": "c_silent",
     }
+
+
+def test_resolve_heat_cool_map_steinbach_override() -> None:
+    """steinbach_silent_mini writes 'Heating'/'Cooling' instead of the
+    global 'Heat'/'Cool' — sending the standard strings left the device
+    stuck reporting Heating regardless of the requested mode (issue #10)."""
+    profile = DEVICE_PROFILES["steinbach_silent_mini"]
+    assert resolve_heat_map(profile) == {"none": "Heating"}
+    assert resolve_cool_map(profile) == {"none": "Cooling"}
 
 
 def test_resolve_auto_dp_defaults_to_global_when_no_override() -> None:

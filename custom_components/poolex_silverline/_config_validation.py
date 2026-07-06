@@ -69,6 +69,7 @@ _KNOWN_POOLEX_PRODUCT_KEYS: frozenset[str] = frozenset(
         "qrlLaHWwIsZsV31f",  # Phalén Calidi XP
         "bf911310efade7bc43mzsm",  # Nulite (house-heating sibling)
         "wfzeiyn1ed3axxde",  # Poolex Silverline (Tuya v3.4 firmware, 2026) — @olomouckyorel
+        "xiusqryqukyqkq3w",  # Steinbach Silent Mini (issue #10)
     }
 )
 

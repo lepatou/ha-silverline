@@ -113,6 +113,26 @@ DEVICE_PROFILES: Final[dict[str, DeviceProfile]] = {
         auto_temp_min=_STD_AUTO_MIN,
         auto_temp_max=_STD_AUTO_MAX,
     ),
+    "steinbach_silent_mini": DeviceProfile(
+        # productKey xiusqryqukyqkq3w (issue #10). Standard DP numbering
+        # (confirmed live: 101 suction, 102 ambient, 103 pool, 104 discharge,
+        # 106 outlet, 107/108 target/actual frequency — matches LAYOUT_STANDARD),
+        # but DP 4 uses full-word mode strings ("Heating"/"Cooling") instead of
+        # the standard family's "Heat"/"Cool". Writing "Cool" left the device
+        # stuck reporting Heating regardless of the requested mode. Boost/eco
+        # variants unconfirmed on this firmware; falls back to the plain
+        # Heating/Cooling string for those presets too.
+        display_name="Steinbach Silent Mini",
+        known_dps=frozenset({1, 2, 3, 4, 101, 102, 103, 104, 106, 107, 108}),
+        preset_to_heat_dp={"none": "Heating"},
+        preset_to_cool_dp={"none": "Cooling"},
+        heat_temp_min=_STD_HEAT_MIN,
+        heat_temp_max=_STD_HEAT_MAX,
+        cool_temp_min=_STD_COOL_MIN,
+        cool_temp_max=_STD_COOL_MAX,
+        auto_temp_min=_STD_AUTO_MIN,
+        auto_temp_max=_STD_AUTO_MAX,
+    ),
     MODEL_PC_INV_120: DeviceProfile(
         # OEM Poolstar PC-INV-120V2 (Poolex Silverline FI 120 V2 sibling),
         # issue #5. Reports DP 3 (current temp) in tenths of a degree — the
@@ -199,6 +219,8 @@ HEAT_PREFIX_TO_PRESET: Final = {
     "heat": PRESET_NONE,
     "h_powerful": PRESET_BOOST,
     "h_silent": PRESET_ECO,
+    # Steinbach Silent Mini / productKey xiusqryqukyqkq3w (issue #10)
+    "Heating": PRESET_NONE,
 }
 COOL_PREFIX_TO_PRESET: Final = {
     # Standard firmware
@@ -209,6 +231,8 @@ COOL_PREFIX_TO_PRESET: Final = {
     "cool": PRESET_NONE,
     "c_powerful": PRESET_BOOST,
     "c_silent": PRESET_ECO,
+    # Steinbach Silent Mini / productKey xiusqryqukyqkq3w (issue #10)
+    "Cooling": PRESET_NONE,
 }
 # All DP-4 strings that map to HVACMode.HEAT_COOL across firmware variants.
 AUTO_MODE_STRINGS: Final = frozenset({"Auto", "auto", "a_powerful", "a_silent"})
